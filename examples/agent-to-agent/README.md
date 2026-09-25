@@ -5,7 +5,7 @@ An **orchestrator agent** breaks a document into chunks, then pays a **specialis
 ## What this covers
 
 - Agent-to-agent payments where the payer is itself an autonomous agent
-- Building a specialist provider with `routedockHono` and a custom POST handler
+- Building a specialist provider with `routedockHono` and a custom GET handler
 - `RouteDockClient` on the orchestrator side paying another agent's endpoint
 - Aggregating paid results into a final output
 - Independent keypairs for orchestrator and specialist
@@ -65,20 +65,20 @@ pnpm start
 [orchestrator] specialist=http://localhost:3200/summarise
 [orchestrator] summarising 3 document chunks
 
-[RouteDock] Summariser Specialist → x402
-#01 input="Stellar is an open-source, decentralized payment protoc…"
+#01 input="Stellar is an open-source, decentralized payment protocol that…"
+  [specialist] settled  txHash=abc123…  amount=0.0003 USDC  mode=x402
      Summary: "Stellar is an open-source, decentralized payment…"
-     txHash=abc123…  paid=0.0003000 USDC
+     txHash=abc123…  paid=0.0003 USDC
 
-[RouteDock] Summariser Specialist → x402
-#02 input="RouteDock is a payment middleware layer for AI agents…"
+#02 input="RouteDock is a payment middleware layer for AI agents, enablin…"
+  [specialist] settled  txHash=def456…  amount=0.0003 USDC  mode=x402
      Summary: "RouteDock is a payment middleware layer…"
-     txHash=def456…  paid=0.0003000 USDC
+     txHash=def456…  paid=0.0003 USDC
 
-[RouteDock] Summariser Specialist → x402
-#03 input="The x402 protocol extends HTTP with a 402 Payment Req…"
+#03 input="The x402 protocol extends HTTP with a 402 Payment Required flo…"
+  [specialist] settled  txHash=ghi789…  amount=0.0003 USDC  mode=x402
      Summary: "The x402 protocol extends HTTP with…"
-     txHash=ghi789…  paid=0.0003000 USDC
+     txHash=ghi789…  paid=0.0003 USDC
 
 --- Aggregated summaries ---
   1. Summary: "Stellar is an open-source, decentralized payment…"
@@ -93,8 +93,8 @@ pnpm start
 
 ```
 Orchestrator Agent                 Specialist Sub-Agent
-  RouteDockClient ──── x402 ──────► routedockHono middleware
-  (ORCHESTRATOR_SECRET)              ► POST /summarise handler
+  RouteDockClient ──── x402 ───────► routedockHono middleware
+  (ORCHESTRATOR_SECRET)              └─ GET /summarise handler
                                      (SPECIALIST_SECRET)
 ```
 
@@ -102,7 +102,8 @@ Each agent has its own funded Stellar keypair. The orchestrator's wallet is debi
 
 ## Extending this pattern
 
-- Replace the canned summariser with a real LLM call inside the specialist's `POST /summarise` handler.
+- Replace the canned summariser with a real LLM call inside the specialist's `GET /summarise` handler.
 - Add more specialist agents (e.g., `/translate`, `/classify`) — the orchestrator calls each one independently.
 - Switch to `mpp-session` if the orchestrator needs to stream many sub-results from a single specialist — see `streaming-orderbook-agent` for the session pattern.
+- Deploy orchestrator and specialist as separate services. The only change needed is setting `SPECIALIST_URL` to the specialist's public URL and `START_MOCK_SPECIALIST=false`.
 - Deploy orchestrator and specialist as separate services. Set `SPECIALIST_URL` to the specialist's public base URL and `START_MOCK_SPECIALIST=false` in the orchestrator environment.
