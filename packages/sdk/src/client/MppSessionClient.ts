@@ -7,6 +7,7 @@
  * @stellar/mpp library handles the 402 challenge-response cycle.
  */
 import { Keypair, Networks } from '@stellar/stellar-sdk'
+import type { rpc } from '@stellar/stellar-sdk'
 import { STELLAR_PUBNET, STELLAR_TESTNET } from '@stellar/mpp'
 import { stellar } from '@stellar/mpp/channel/client'
 import { Challenge } from 'mppx'
@@ -45,7 +46,7 @@ export const TX_CONFIRM_TIMEOUT_MS = 30_000
  * Returns the hash on SUCCESS, throws RouteDockDisputeError on FAILED or timeout.
  */
 async function confirmTransaction(
-  server: { getTransaction(hash: string): Promise<any> },
+  server: Pick<rpc.Server, 'getTransaction'>,
   hash: string,
   label: string,
   timeoutMs: number = TX_CONFIRM_TIMEOUT_MS,
@@ -59,10 +60,9 @@ async function confirmTransaction(
       return hash
     }
     if (status === 'FAILED') {
-      const detail = txResponse.resultXdr
-        ? ` (resultXdr: ${typeof txResponse.resultXdr === 'string' ? txResponse.resultXdr : JSON.stringify(txResponse.resultXdr)})`
-        : ''
-      throw new RouteDockDisputeError(`${label} transaction failed on-chain: status FAILED${detail}`)
+      throw new RouteDockDisputeError(
+        `${label} transaction failed on-chain: status FAILED (resultXdr: ${txResponse.resultXdr.toXDR('base64')})`,
+      )
     }
     if (Date.now() >= deadline) {
       break

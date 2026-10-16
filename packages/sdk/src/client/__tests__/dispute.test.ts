@@ -174,13 +174,13 @@ describe('requestRefund()', () => {
 
   it('throws RouteDockDisputeError when getTransaction returns FAILED', async () => {
     rpc.sendTransaction = () => ({ hash: 'FAILED_TX_HASH' })
-    rpc.getTransaction = () => ({ status: 'FAILED', resultXdr: 'AAAA...' })
+    rpc.getTransaction = () => ({ status: 'FAILED', resultXdr: { toXDR: () => 'AAAA' } })
     const handle = await openHandle()
     await assert.rejects(
       () => handle.requestRefund(),
       (err: unknown) =>
         err instanceof RouteDockDisputeError &&
-        /FAILED/i.test((err as Error).message),
+        /failed on-chain: status FAILED \(resultXdr: AAAA\)/.test((err as Error).message),
     )
   })
 
@@ -276,13 +276,13 @@ describe('settleWithLatestVoucher()', () => {
       result: { retval: { bytes: () => Buffer.from([1, 2, 3, 4]) } },
     })
     rpc.sendTransaction = () => ({ hash: 'SETTLE_FAILED_HASH' })
-    rpc.getTransaction = () => ({ status: 'FAILED', resultXdr: 'AAAA...' })
+    rpc.getTransaction = () => ({ status: 'FAILED', resultXdr: { toXDR: () => 'AAAA' } })
     const handle = await openHandle()
     await assert.rejects(
       () => handle.settleWithLatestVoucher(),
       (err: unknown) =>
         err instanceof RouteDockDisputeError &&
-        /FAILED/i.test((err as Error).message),
+        /failed on-chain: status FAILED \(resultXdr: AAAA\)/.test((err as Error).message),
     )
   })
 

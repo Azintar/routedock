@@ -376,9 +376,15 @@ export interface SessionHandle {
   stats(): SessionStats
   /** Close the channel on-chain with the highest signed voucher */
   close(): Promise<SessionCloseResult>
-  /** Request refund from the channel contract (initiates dispute) */
+  /**
+   * Request refund from the channel contract (initiates dispute).
+   * Returns the transaction hash only after on-chain confirmation (SUCCESS).
+   */
   requestRefund(options?: { timeoutMs?: number; intervalMs?: number }): Promise<string>
-  /** Server-side counter-mechanism to settle with latest voucher before refund window expires */
+  /**
+   * Server-side counter-mechanism to settle with latest voucher before refund window expires.
+   * Returns the transaction hash only after on-chain confirmation (SUCCESS).
+   */
   settleWithLatestVoucher(options?: { timeoutMs?: number; intervalMs?: number }): Promise<string>
   /** Get the current dispute status of the channel */
   getDisputeStatus(): Promise<DisputeStatus>
