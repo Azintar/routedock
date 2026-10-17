@@ -159,9 +159,82 @@ export interface OpenSessionArgs {
   initial_deposit?: string
 }
 
+/** The manifest fields open_session reads. The JSON is unverified, so every
+ * field is treated as untrusted and checked before use. */
+interface OpenSessionManifest {
+  pricing?: Record<string, { min_deposit?: string }>
+  endpoints?: Record<string, { method?: unknown; path?: unknown }>
+}
+
 /**
- * Optionally run the min_deposit preflight, then open an MPP session and store
- * the live handle in `openSessions` so stream_session / close_session can find it.
+ * Resolve a bare provider origin to its streaming endpoint using the manifest.
+ *
+ * The SDK uses the URL handed to openSession as the exact voucher and DELETE
+ * target, so a bare origin pays for vouchers that hit a 404 (issue #317).
+ * Prefers `endpoints.stream`, else the sole endpoint. The result must stay on
+ * the requested origin so a manifest cannot redirect the session elsewhere.
+ */
+function resolveSessionEndpoint(
+  origin: string,
+  manifest: OpenSessionManifest | null,
+): { url: string } | { error: string } {
+  const raw = manifest?.endpoints
+  const endpoints =
+    raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const entries = Object.entries(endpoints)
+
+  const listing =
+    entries.length > 0
+      ? entries
+          .map(([name, e]) => `${name}: ${String(e?.method)} ${String(e?.path)}`)
+          .join(', ')
+      : '(none)'
+  const fail = (reason: string) => ({
+    error:
+      `Could not resolve a streaming endpoint for ${origin}: ${reason}. ` +
+      `Endpoints in its manifest: ${listing}. ` +
+      `Call open_session again with the full endpoint URL (e.g. ${origin}/stream/orderbook).`,
+  })
+
+  let chosen: [string, { method?: unknown; path?: unknown }] | undefined
+  if (Object.hasOwn(endpoints, 'stream')) {
+    chosen = ['stream', endpoints.stream!]
+  } else if (entries.length === 1) {
+    chosen = entries[0]
+  }
+  if (!chosen) {
+    return fail(
+      entries.length === 0
+        ? 'the manifest lists no endpoints'
+        : `the manifest has no "stream" endpoint and ${entries.length} others to choose from`,
+    )
+  }
+
+  const [name, endpoint] = chosen
+  const method = typeof endpoint?.method === 'string' ? endpoint.method.toUpperCase() : ''
+  if (method !== 'GET') {
+    return fail(`endpoint "${name}" uses method ${String(endpoint?.method)}, but sessions stream with GET`)
+  }
+  if (typeof endpoint.path !== 'string') {
+    return fail(`endpoint "${name}" has no path`)
+  }
+
+  let resolved: URL
+  try {
+    resolved = new URL(endpoint.path, origin)
+  } catch {
+    return fail(`endpoint "${name}" has an invalid path`)
+  }
+  if (resolved.origin !== origin) {
+    return fail(`endpoint "${name}" points outside ${origin}`)
+  }
+  return { url: resolved.href }
+}
+
+/**
+ * Optionally run the min_deposit preflight, resolve a bare provider origin to
+ * its streaming endpoint, then open an MPP session and store the live handle
+ * in `openSessions` so stream_session / close_session can find it.
  */
 export async function handleOpenSession(
   args: OpenSessionArgs,
@@ -175,15 +248,23 @@ export async function handleOpenSession(
     return err('COMMITMENT_SECRET environment variable is required for session mode')
   }
 
-  if (initial_deposit) {
-    const baseUrl = new URL(url).origin
-    const manifestUrl = `${baseUrl}/.well-known/routedock.json`
+  const parsed = new URL(url)
+  const origin = parsed.origin
+  const isBareOrigin = parsed.pathname === '' || parsed.pathname === '/'
 
-    const fetcher = fetchManifest ?? ((u: string) => fetch(u))
-    const manifestResponse = await fetcher(manifestUrl)
-    const manifest = (await manifestResponse.json()) as {
-      pricing?: Record<string, { min_deposit?: string }>
+  // Fetched at most once and shared by the min_deposit check and endpoint resolution.
+  let cachedManifest: OpenSessionManifest | null | undefined
+  const loadManifest = async (): Promise<OpenSessionManifest | null> => {
+    if (cachedManifest === undefined) {
+      const fetcher = fetchManifest ?? ((u: string) => fetch(u))
+      const manifestResponse = await fetcher(`${origin}/.well-known/routedock.json`)
+      cachedManifest = (await manifestResponse.json()) as OpenSessionManifest | null
     }
+    return cachedManifest
+  }
+
+  if (initial_deposit) {
+    const manifest = await loadManifest()
 
     const minDeposit =
       manifest?.pricing?.['mpp-session']?.min_deposit ??
@@ -197,13 +278,23 @@ export async function handleOpenSession(
     }
   }
 
-  const session = await client.openSession(url)
+  let endpointUrl = url
+  if (isBareOrigin) {
+    const resolution = resolveSessionEndpoint(origin, await loadManifest())
+    if ('error' in resolution) {
+      return err(resolution.error)
+    }
+    endpointUrl = resolution.url
+  }
+
+  const session = await client.openSession(endpointUrl)
   openSessions.set(session.channelId, session)
 
   return ok({
     success: true,
     channel_id: session.channelId,
     open_tx_hash: session.openTxHash,
+    endpoint_url: endpointUrl,
     message:
       'Session opened successfully. Use stream_session to pull data and close_session to settle and release the channel collateral.',
   })
