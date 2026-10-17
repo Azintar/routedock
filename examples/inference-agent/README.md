@@ -71,24 +71,25 @@ pnpm start
 
 ```text
 [mock-provider] listening on http://localhost:3100
+[RouteDock] Using in-memory SpendStore: the daily spend cap is NOT durable and resets on every process restart. Inject a persistent SpendStore via RouteDockClientConfig.spendStore for production safety.
 [client] network=testnet
 [client] provider=http://localhost:3100/infer
 [client] sending 3 inference requests via mpp-charge
 
 #01 prompt="hello"
-  [provider] settled  txHash=abc123…  amount=0.0005 USDC  mode=mpp-charge
+  [provider] settled  txHash=2380b0cfef4bdb1b2a8b7259876dc4f24c744acb3d09fc9cbbe25d15cb628ba3  amount=0.0005 USDC  mode=mpp-charge
      response="Hello! This response was paid for via MPP charge."
-     model=mock-v1  txHash=abc123…  paid=0.0005 USDC
+     model=mock-v1  txHash=n/a  paid=0.0005 USDC
 
 #02 prompt="Can you explain what MPP charge is?"
-  [provider] settled  txHash=def456…  amount=0.0005 USDC  mode=mpp-charge
+  [provider] settled  txHash=5e4b380bfb59801a0d71908758029b803d0de94ee7e234ca97c4f3ccacdd515f  amount=0.0005 USDC  mode=mpp-charge
      response="MPP (Metered Payment Protocol) charge enables per-request micropayments without a channel."
-     model=mock-v1  txHash=def456…  paid=0.0005 USDC
+     model=mock-v1  txHash=n/a  paid=0.0005 USDC
 
 #03 prompt="What is the capital of France?"
-  [provider] settled  txHash=ghi789…  amount=0.0005 USDC  mode=mpp-charge
+  [provider] settled  txHash=5fffeed638a8828da0385b1184fe9daf8a97b0abb7a454d36f404cf7dc45cf0c  amount=0.0005 USDC  mode=mpp-charge
      response="I'm a mock inference endpoint. Payment received — here's your canned response."
-     model=mock-v1  txHash=ghi789…  paid=0.0005 USDC
+     model=mock-v1  txHash=n/a  paid=0.0005 USDC
 
 [done] 3 inferences completed via mpp-charge
 ```

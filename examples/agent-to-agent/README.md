@@ -61,24 +61,25 @@ pnpm start
 
 ```text
 [specialist] listening on http://localhost:3200
+[RouteDock] Using in-memory SpendStore: the daily spend cap is NOT durable and resets on every process restart. Inject a persistent SpendStore via RouteDockClientConfig.spendStore for production safety.
 [orchestrator] network=testnet
 [orchestrator] specialist=http://localhost:3200/summarise
 [orchestrator] summarising 3 document chunks
 
-#01 input="Stellar is an open-source, decentralized payment protocol that…"
-  [specialist] settled  txHash=abc123…  amount=0.0003 USDC  mode=x402
+#01 input="Stellar is an open-source, decentralized payment protocol th…"
+  [specialist] settled  txHash=6a95d269a8939705e607077cbda333c92d49893ff3a1c828a55779c48f7fa96a  amount=0.0003 USDC  mode=x402
      Summary: "Stellar is an open-source, decentralized payment…"
-     txHash=abc123…  paid=0.0003 USDC
+     txHash=6a95d269a8939705e607077cbda333c92d49893ff3a1c828a55779c48f7fa96a  paid=0.0003 USDC
 
-#02 input="RouteDock is a payment middleware layer for AI agents, enablin…"
-  [specialist] settled  txHash=def456…  amount=0.0003 USDC  mode=x402
+#02 input="RouteDock is a payment middleware layer for AI agents, enabl…"
+  [specialist] settled  txHash=9d46d11206d124e4ab280282ec0f92406db7028193e2725ee45175067495d809  amount=0.0003 USDC  mode=x402
      Summary: "RouteDock is a payment middleware layer…"
-     txHash=def456…  paid=0.0003 USDC
+     txHash=9d46d11206d124e4ab280282ec0f92406db7028193e2725ee45175067495d809  paid=0.0003 USDC
 
-#03 input="The x402 protocol extends HTTP with a 402 Payment Required flo…"
-  [specialist] settled  txHash=ghi789…  amount=0.0003 USDC  mode=x402
+#03 input="The x402 protocol extends HTTP with a 402 Payment Required f…"
+  [specialist] settled  txHash=53bb5d69eb1576392d1e2da9e3773cb9deac42494089ab756b165e13c62befa7  amount=0.0003 USDC  mode=x402
      Summary: "The x402 protocol extends HTTP with…"
-     txHash=ghi789…  paid=0.0003 USDC
+     txHash=53bb5d69eb1576392d1e2da9e3773cb9deac42494089ab756b165e13c62befa7  paid=0.0003 USDC
 
 --- Aggregated summaries ---
   1. Summary: "Stellar is an open-source, decentralized payment…"
