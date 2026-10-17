@@ -32,8 +32,6 @@ const SPECIALIST_SECRET = process.env['SPECIALIST_SECRET'] ?? ''
 const START_SPECIALIST = process.env['START_MOCK_SPECIALIST'] !== 'false'
 const SPECIALIST_PORT = 3200
 const SPECIALIST_URL = (process.env['SPECIALIST_URL'] ?? `http://localhost:${SPECIALIST_PORT}`).replace(/\/$/, '')
-const SPECIALIST_URL =
-    process.env['SPECIALIST_URL'] ?? `http://localhost:${SPECIALIST_PORT}`
 
 // USDC on Stellar testnet
 const USDC_CONTRACT: string =

@@ -105,5 +105,4 @@ Each agent has its own funded Stellar keypair. The orchestrator's wallet is debi
 - Replace the canned summariser with a real LLM call inside the specialist's `GET /summarise` handler.
 - Add more specialist agents (e.g., `/translate`, `/classify`) — the orchestrator calls each one independently.
 - Switch to `mpp-session` if the orchestrator needs to stream many sub-results from a single specialist — see `streaming-orderbook-agent` for the session pattern.
-- Deploy orchestrator and specialist as separate services. The only change needed is setting `SPECIALIST_URL` to the specialist's public URL and `START_MOCK_SPECIALIST=false`.
 - Deploy orchestrator and specialist as separate services. Set `SPECIALIST_URL` to the specialist's public base URL and `START_MOCK_SPECIALIST=false` in the orchestrator environment.
