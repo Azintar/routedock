@@ -28,14 +28,14 @@ An **orchestrator agent** breaks a document into chunks, then pays a **specialis
 3. Add USDC trustlines to both agents and fund the payer. Replace each `<..._KEY>` placeholder with the corresponding Stellar CLI signing-key alias:
 
    ```bash
-   stellar tx new --source <ORCHESTRATOR_KEY> --network testnet \
-     change-trust --asset USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 --limit 100
+   stellar tx new change-trust --source-account <ORCHESTRATOR_KEY> --network testnet \
+     --line USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
 
-   stellar tx new --source <SPECIALIST_KEY> --network testnet \
-     change-trust --asset USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 --limit 100
+   stellar tx new change-trust --source-account <SPECIALIST_KEY> --network testnet \
+     --line USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
    ```
 
-   The specialist needs the trustline to receive x402 transfers. Then open [Circle's testnet faucet](https://faucet.circle.com/), select **Stellar Testnet**, paste the orchestrator public key, and request spendable testnet USDC for the payer.
+   `--limit` is left out on purpose: it is in stroops and defaults to the maximum, so a value like `--limit 100` would cap the trustline at 0.00001 USDC. The specialist needs the trustline to receive x402 transfers. Then open [Circle's testnet faucet](https://faucet.circle.com/), select **Stellar Testnet**, paste the orchestrator public key, and request spendable testnet USDC for the payer.
 
 4. Copy the env file:
 

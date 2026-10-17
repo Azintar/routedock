@@ -30,28 +30,22 @@ Sends prompts to a mock inference provider and pays per request using the **MPP 
 
    ```bash
    # Add trustline for agent (payer) and mock provider (receiver)
-   stellar tx new --source <agent-key> --network testnet \
-     change-trust --asset USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 --limit 100
+   stellar tx new change-trust --source-account <agent-key> --network testnet \
+     --line USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
 
-   stellar tx new --source <provider-key> --network testnet \
-     change-trust --asset USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 --limit 100
+   stellar tx new change-trust --source-account <provider-key> --network testnet \
+     --line USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
 
    # Get testnet USDC for the agent from Circle's testnet faucet:
    # https://faucet.circle.com/ (Select "Stellar Testnet", paste agent public key, request USDC)
    ```
 
+   `--limit` is left out on purpose: it is in stroops and defaults to the maximum, so a value like `--limit 100` would cap the trustline at 0.00001 USDC.
+
    - **Agent (`AGENT_SECRET`, payer)**: needs testnet XLM, the USDC trustline, and testnet USDC.
    - **Provider (`PROVIDER_SECRET`, receiver)**: needs testnet XLM and the USDC trustline.
 
    > **Note:** `client.pay()` sends a `GET` request with no body, so a paid route must accept `GET` and read its input from the URL query string.
-3. Add a USDC trustline and get testnet USDC. Replace `<AGENT_KEY>` with a Stellar CLI signing-key alias for `AGENT_SECRET`; use that key's public address for Friendbot and Circle:
-
-   ```bash
-   stellar tx new --source <AGENT_KEY> --network testnet \
-     change-trust --asset USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 --limit 100
-   ```
-
-   Then open [Circle's testnet faucet](https://faucet.circle.com/), select **Stellar Testnet**, paste the same public key, and request testnet USDC.
 
 4. Copy the env file:
 
