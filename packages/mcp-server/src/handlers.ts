@@ -12,6 +12,7 @@
  */
 
 import type { RouteDockClient, SessionHandle, PaymentMode } from '@routedock/routedock'
+import { usdcToStroops } from '@routedock/routedock'
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
 import { MAX_STREAM_MESSAGES } from './tools.js'
 
@@ -109,8 +110,24 @@ export interface PayForDataArgs {
   preferred_mode?: PaymentMode
 }
 
+/** Parse a decimal USDC string to stroops, or null when it is not one. */
+function parseUsdc(amount: unknown): bigint | null {
+  // usdcToStroops calls amount.trim(), so non-strings must be rejected first.
+  if (typeof amount !== 'string') return null
+  try {
+    return usdcToStroops(amount)
+  } catch {
+    return null
+  }
+}
+
 /**
  * Validate price against max_amount then execute the payment.
+ *
+ * MCP does not validate arguments against inputSchema, so max_amount is
+ * checked here. A missing or non-numeric ceiling used to make the comparison
+ * NaN-false and pay with no limit (issue #316). Both amounts are compared
+ * exactly in stroops.
  *
  * preferred_mode maps to ModeSelectOptions.forceMode — the field is NOT called
  * preferredMode, so we must not pass it by that name (silent drop, issue #199).
@@ -122,17 +139,26 @@ export async function handlePayForData(
   const { url, max_amount, preferred_mode } = args
   const { client } = deps
 
+  const maxStroops = parseUsdc(max_amount)
+  if (maxStroops === null || maxStroops === 0n) {
+    return err(
+      `max_amount must be a positive USDC amount as a decimal string with at most 7 decimal places, ` +
+        `e.g. "0.01" (received ${JSON.stringify(max_amount) ?? 'nothing'})`,
+    )
+  }
+
   const modeOptions = preferred_mode
     ? { forceMode: preferred_mode as PaymentMode }
     : undefined
 
   const estimate = await client.estimateCost(url, modeOptions)
 
-  if (estimate.amount === undefined || isNaN(parseFloat(estimate.amount))) {
+  const priceStroops = parseUsdc(estimate.amount)
+  if (priceStroops === null) {
     return err('Provider returned an undefined or invalid price')
   }
 
-  if (parseFloat(estimate.amount) > parseFloat(max_amount)) {
+  if (priceStroops > maxStroops) {
     return err(
       `Provider cost ${estimate.amount} ${estimate.asset} exceeds max_amount ${max_amount} USDC`,
     )
