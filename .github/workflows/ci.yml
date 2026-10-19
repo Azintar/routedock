@@ -97,6 +97,11 @@ jobs:
         uses: reviewdog/action-actionlint@13465d022aa41c282f730be17574b5ce692d0186 # v1.78.1
         with:
           fail_level: error
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Test E2E provider failure diagnostics
+        run: node --test scripts/e2e-provider-logs.test.mjs
       - name: Guard release.yml permissions
         # release.yml has twice regressed to missing the permissions that make
         # Changesets and the release watchdog work (#255, fixed in 8f3d82b).
