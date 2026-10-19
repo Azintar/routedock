@@ -441,7 +441,11 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
 
       await next()
     } catch (err) {
-      throw err
+      if (err instanceof RouteDockManifestError) {
+        throw err
+      }
+      logger('error', '[mpp-charge] Settlement error', { error: err })
+      return c.json({ error: 'Payment settlement failed' }, 500)
     }
   }
 }
@@ -755,10 +759,12 @@ function createMppSessionHonoHandler(
   state: MppSessionHandlerState,
 ): MiddlewareHandler {
   const sessionPricing = opts.pricing[config.mode]!
+  const logger = resolveLogger(opts.logger)
   return async (c, next) => {
     try {
       if (c.req.method === 'DELETE') {
-        return state.handleDelete(c as unknown as DeleteContext)
+        // `await` so a rejected close is caught below rather than escaping.
+        return await state.handleDelete(c as unknown as DeleteContext)
       }
 
       const result = await (
@@ -796,7 +802,11 @@ function createMppSessionHonoHandler(
 
       await next()
     } catch (err) {
-      throw err
+      if (err instanceof RouteDockManifestError) {
+        throw err
+      }
+      logger('error', `[${config.mode}] Session error`, { error: err })
+      return c.json({ error: 'Session payment failed' }, 500)
     }
   }
 }
