@@ -38,7 +38,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/__tests__/nulth.test.ts",
+    "test": "tsx --test src/__tests__/*.test.ts",
     "check:readme": "node ../../scripts/check-nulth-readme.mjs"
   },
   "dependencies": {

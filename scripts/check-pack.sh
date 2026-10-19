@@ -10,4 +10,6 @@ for pkg_dir in "${packages[@]}"; do
   echo "  $pkg_dir pack hygiene and entry points: OK"
 done
 
+node "$root/scripts/check-packed-nulth.mjs"
+
 echo "All packages passed package hygiene and entry point checks."

@@ -97,3 +97,14 @@ A real prover/verifier integration is still required before this package can pro
 
 For contributors, `pnpm --filter @routedock/nulth-sdk check:readme` typechecks every
 TypeScript example against the built package exports. It also runs during `pnpm verify`.
+## Diagnostics and configuration errors
+
+Diagnostics are silent by default. Pass a `logger(level, message, fields?)` in
+`NulthClientConfig` (also accepted by `createNulthSigner`) to receive the mock-prover
+warning. The sink is compatible with RouteDock's `RouteDockLogger`; the RouteDock
+SDK adapter retains its console-backed default and accepts the same override.
+
+Invalid networks and prover backends throw `NulthConfigError`, with code
+`unsupported_network` or `unsupported_prover`. The RouteDock adapter maps these
+to `RouteDockManifestError`; policy failures remain `NulthPolicyError`.
+
