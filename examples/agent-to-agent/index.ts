@@ -127,7 +127,6 @@ async function main(): Promise<void> {
     let server: ReturnType<typeof serve> | null = null
 
     if (START_SPECIALIST) {
-        requireSecret('SPECIALIST_SECRET', SPECIALIST_SECRET)
         const app = buildSpecialistServer(SPECIALIST_SECRET)
         server = serve({ fetch: app.fetch, port: SPECIALIST_PORT })
         console.log(`[specialist] listening on ${SPECIALIST_URL}`)
