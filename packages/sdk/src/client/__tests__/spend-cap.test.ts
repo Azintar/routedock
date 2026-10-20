@@ -449,7 +449,7 @@ function fakeResult(mode: string, amount: string): PaymentResult {
   })
 
   // _recordSessionSpend is private; access via any for testing
-  const record = (amount: string) => (client as any)._recordSessionSpend(amount, 'https://api.test.com') as Promise<void>
+  const record = (amount: string) => (client as any)._recordSessionSpend(amount, 'https://api.test.com', 'USDC') as Promise<void>
 
   // Record 5 vouchers at 0.0001 each (total 0.0005 — at cap)
   for (let i = 0; i < 5; i++) {
