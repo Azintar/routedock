@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { ArrowLeft, Package, Server, Bot, Shield, Search, Terminal, type LucideIcon } from 'lucide-react'
+import { DocsSectionNav } from '@/components/layout/DocsSectionNav'
 import { DOCS_MANIFEST_EXAMPLE } from '@/lib/docsManifestExample'
 
 export const metadata: Metadata = {
@@ -60,24 +61,10 @@ export default function DocsPage() {
         </div>
 
         <div className="lg:grid lg:grid-cols-[220px_1fr] lg:gap-12">
-          {/* Sidebar nav */}
-          <nav className="hidden lg:block sticky top-24 self-start">
-            <ul className="space-y-1">
-              {NAV.map((item) => (
-                <li key={item.id}>
-                  <a
-                    href={`#${item.id}`}
-                    className="block rounded-md px-3 py-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors"
-                  >
-                    {item.label}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </nav>
+          <DocsSectionNav sections={NAV} />
 
           {/* Content */}
-          <div className="space-y-16">
+          <div className="min-w-0 space-y-16">
             <div>
               <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-2">Documentation</h1>
               <p className="text-[var(--text-secondary)]">
