@@ -52,7 +52,7 @@ export function PublicNav() {
             <span className="font-bold text-[var(--text-primary)] tracking-tight">
               Route<span className="text-[var(--accent)]">Dock</span>
             </span>
-            <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] animate-pulse" />
+            <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] motion-safe:animate-pulse" />
           </Link>
 
           {/* Center nav — desktop only */}

@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config'
 import path from 'node:path'
 
 export default defineConfig({
+  esbuild: { jsx: 'automatic' },
   resolve: {
     alias: {
       // Match the @/* path alias defined in tsconfig.json
