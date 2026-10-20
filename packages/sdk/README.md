@@ -605,6 +605,7 @@ import {
   RouteDockError,
   RouteDockFacilitatorError,
   RouteDockManifestError,
+  RouteDockPaymentRejectedError,
   RouteDockPolicyRejectError,
 } from '@routedock/sdk/client'
 
@@ -620,6 +621,9 @@ try {
 } catch (err) {
   if (err instanceof RouteDockPolicyRejectError) {
     console.error('Spend cap exceeded:', err.reason)
+  } else if (err instanceof RouteDockPaymentRejectedError) {
+    // The provider refused the signed payment; `reason` is its explanation.
+    console.error(`Payment rejected (HTTP ${err.status}):`, err.reason ?? err.providerError)
   } else if (err instanceof RouteDockFacilitatorError) {
     console.error(`Facilitator HTTP ${err.status} (retryable=${err.retryable})`)
   } else if (err instanceof RouteDockManifestError) {
@@ -637,6 +641,7 @@ try {
 | `RouteDockManifestError` | no | Invalid manifest, missing pricing fields |
 | `RouteDockNoSupportedModeError` | no | Provider has no compatible payment mode |
 | `RouteDockFacilitatorError` | yes | Facilitator/provider 429 or 5xx |
+| `RouteDockPaymentRejectedError` | no | Provider refused the signed paid request (HTTP 401/402/other 4xx); `status` and `reason` carry why |
 | `RouteDockNetworkError` | yes | Timeouts, connection failures |
 | `RouteDockSignatureError` | no | Signing or commitment failure |
 | `RouteDockVoucherMonotonicityError` | no | Non-increasing voucher amount |
