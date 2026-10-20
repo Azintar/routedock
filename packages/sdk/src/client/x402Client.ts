@@ -10,6 +10,7 @@ import {
   RouteDockManifestError,
   RouteDockSignatureError,
   httpStatusToError,
+  paymentRejectedError,
   wrapFetchError,
 } from '../errors.js'
 import { stroopsToUsdc } from '../internal/usdc.js'
@@ -163,7 +164,7 @@ export class X402Client {
             response,
           )
         }
-        throw new RouteDockManifestError(`x402 payment failed: HTTP ${response.status}`)
+        throw await paymentRejectedError('x402 payment failed', response.status, response)
       }
 
       return response
