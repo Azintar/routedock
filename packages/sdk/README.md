@@ -35,6 +35,15 @@ for await (const update of session.stream()) {
 await session.close() // triggers on-chain settlement
 ```
 
+### Spend cap and other assets
+
+The cap is a single USDC total. If the asset selected for a payment is not
+`spendCap.asset` (for example a provider that prices in XLM), `pay()` and
+`openSession()` throw `RouteDockPolicyRejectError` with reason
+`local_cap_asset_mismatch` before anything is paid, and nothing is added to the
+USDC total. USDC-only providers are unaffected. See
+`docs/MULTI_ASSET_SUPPORT.md`.
+
 ### Durable spend cap
 
 The `spendCap` is enforced via a pluggable `SpendStore` (`read()` / `write()`).
