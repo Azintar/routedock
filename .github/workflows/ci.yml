@@ -66,6 +66,13 @@ jobs:
         run: pnpm --filter @routedock/routedock build
       - name: Build remaining packages
         run: pnpm -r --filter '!@routedock/nulth-sdk' --filter '!@routedock/routedock' build
+      # client, react and provider/hono are documented as Workers/browser-safe.
+      # Fails if a built entry imports a Node built-in (node:fs, node:crypto, ...)
+      # or references Buffer.
+      - name: Check runtime-neutral bundles
+        run: |
+          node scripts/check-runtime-neutral.mjs --self-test
+          node scripts/check-runtime-neutral.mjs
       - name: Check package types (arethetypeswrong)
         run: |
           npx --yes @arethetypeswrong/cli@0.18.5 --pack packages/nulth-sdk
