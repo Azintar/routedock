@@ -26,6 +26,7 @@ import {
   type CheckBalanceArgs,
   type ListProvidersArgs,
 } from './handlers.js'
+import { setupShutdownHandlers } from './shutdown.js'
 // Load environment variables (supports .env files for external secret management)
 const envPath = process.env.ROUTEDOCK_ENV_FILE
 if (envPath) {
@@ -75,9 +76,9 @@ if (SUPABASE_URL && SUPABASE_KEY) {
 
 // Sessions opened via open_session, keyed by channelId, so a later
 // close_session/stream_session call in the same server process can find the
-// live handle again. If the process restarts, in-flight sessions are not
-// recoverable here — the SDK's own maxDurationMs guard still auto-closes the
-// underlying channel on-chain so collateral is never stranded indefinitely.
+// live handle again. On process shutdown (SIGINT, SIGTERM, or stdio close),
+// all open sessions are gracefully closed with a bounded timeout to settle
+// vouchers and release locked deposits.
 const openSessions = new Map<string, SessionHandle>()
 
 // Shared dependency bundle passed into every handler
@@ -156,6 +157,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Start server
 async function main() {
   const transport = new StdioServerTransport()
+  setupShutdownHandlers({ openSessions, transport })
   await server.connect(transport)
   console.error('@routedock/mcp-server running on stdio')
 }
