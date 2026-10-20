@@ -1,6 +1,6 @@
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
 import { fetchManifest, selectMode, invalidateManifest as evictManifest, assertManifestValid, assertEndpointActive, type ModeSelectOptions, type RouteDockLogger } from './ModeRouter.js'
-import { X402Client } from './x402Client.js'
+import { X402Client, type X402PreSignHook } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
 import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
@@ -114,6 +114,11 @@ export interface RouteDockClientConfig {
   commitmentSecret?: string | undefined
   /** Retry policy for transient failures (network, facilitator 5xx). */
   retryPolicy?: RetryPolicy
+  /**
+   * Optional guard run before an x402 payment is signed. Rejecting or throwing
+   * aborts the payment with `RouteDockPolicyRejectError`. x402 mode only.
+   */
+  preSignHook?: X402PreSignHook
   /**
    * Durable backing store for the daily spend cap accumulator. Defaults to a
    * non-durable in-memory store that resets on restart (with a startup warning).
@@ -241,7 +246,7 @@ export class RouteDockClient {
     // Carry the client's logger into retry diagnostics so a consumer that
     // silences the SDK silences the retry path too.
     const retryPolicy = this.logger ? { ...this.retryPolicy, logger: this.logger } : this.retryPolicy
-    this.x402 = new X402Client(secretKey, this.network, retryPolicy)
+    this.x402 = new X402Client(secretKey, this.network, retryPolicy, config.preSignHook)
     this.charge = new MppChargeClient(this.keypair, this.network, retryPolicy)
     this.session = new MppSessionClient(this.keypair, this.network, retryPolicy, undefined, this.logger)
   }

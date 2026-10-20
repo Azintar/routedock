@@ -629,3 +629,85 @@ test('X402Client - reports the amount actually signed, not the manifest price', 
     globalThis.fetch = originalFetch
   }
 })
+
+// ── optional pre-sign hook ───────────────────────────────────────────────────
+
+test('X402Client - pre-sign hook rejection aborts before signing', async () => {
+  const { signer, calls } = signerStub()
+  let seen = 0
+  const client = new X402Client(signer, 'testnet', undefined, async (ctx) => {
+    seen++
+    assert.equal(ctx.url, 'https://api.test/paid')
+    assert.equal(ctx.accepts.length, 1)
+    return { approve: false, reason: 'looks_injected' }
+  })
+  let fetchCount = 0
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () => {
+    fetchCount++
+    return paymentRequiredResponse()
+  }) as typeof fetch
+
+  try {
+    await assert.rejects(
+      () => client.pay('https://api.test/paid', manifest),
+      (err: unknown) => {
+        assert.ok(err instanceof RouteDockPolicyRejectError)
+        assert.equal(err.reason, 'looks_injected')
+        return true
+      },
+    )
+    assert.equal(seen, 1)
+    assert.equal(calls.length, 0, 'signer must never be asked to sign')
+    assert.equal(fetchCount, 1, 'no settlement request is sent')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('X402Client - pre-sign hook that throws fails closed before signing', async () => {
+  const { signer, calls } = signerStub()
+  const client = new X402Client(signer, 'testnet', undefined, () => {
+    throw new Error('audit service down')
+  })
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () => paymentRequiredResponse()) as typeof fetch
+
+  try {
+    await assert.rejects(
+      () => client.pay('https://api.test/paid', manifest),
+      (err: unknown) => {
+        assert.ok(err instanceof RouteDockPolicyRejectError)
+        assert.equal(err.reason, 'pre_sign_hook_error')
+        return true
+      },
+    )
+    assert.equal(calls.length, 0)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('X402Client - approving pre-sign hook runs once and signing proceeds', async (t) => {
+  let hookCalls = 0
+  const client = new X402Client(keypair.secret(), 'testnet', undefined, () => {
+    hookCalls++
+    return { approve: true }
+  })
+  t.mock.method(x402HTTPClient.prototype, 'createPaymentPayload', async () => makePayload())
+  t.mock.method(x402HTTPClient.prototype, 'encodePaymentSignatureHeader', () => ({
+    'PAYMENT-SIGNATURE': 'sig',
+  }))
+  let n = 0
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    n++ === 0 ? paymentRequiredResponse() : jsonResponse({ ok: true })) as typeof fetch
+
+  try {
+    const result = await client.pay('https://api.test/paid', manifest)
+    assert.equal(hookCalls, 1)
+    assert.deepEqual(result.data, { ok: true })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
