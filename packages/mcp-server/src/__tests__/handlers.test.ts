@@ -10,6 +10,7 @@ import {
   handleCheckBalance,
   handleListProviders,
   type HandlerDeps,
+  type PayForDataArgs,
   type ToolResult,
   type HorizonBalance,
   type ProviderRow,
@@ -220,6 +221,104 @@ describe('handlePayForData', () => {
     )
     assert.deepEqual(capturedModeOptions, { forceMode: 'mpp-charge' })
   })
+  // -------------------------------------------------------------------------
+  // max_amount validation (issue #316). MCP never validates arguments against
+  // inputSchema, so a missing or non-numeric max_amount used to compare as NaN
+  // and pay with no ceiling.
+  // -------------------------------------------------------------------------
+
+  /** Deps whose fake client quotes `price` and records which calls ran. */
+  function payDeps(price: string | undefined) {
+    const calls = { estimateCost: 0, pay: 0 }
+    const deps = baseDeps({
+      client: makeClient({
+        estimateCost: async () => {
+          calls.estimateCost++
+          return { ...estimate('0'), amount: price as string }
+        },
+        pay: async () => {
+          calls.pay++
+          return { mode: 'x402' as const, amount: price ?? '', txHash: 'TXHASH', timestamp: Date.now(), data: {} }
+        },
+      }),
+    })
+    return { deps, calls }
+  }
+
+  function errorText(result: ToolResult): string {
+    return (parseResult(result) as { error: string }).error
+  }
+
+  const INVALID_MAX_AMOUNTS: Array<[string, unknown]> = [
+    ['missing', undefined],
+    ['""', ''],
+    ['null', null],
+    ['"$0.01"', '$0.01'],
+    ['"abc"', 'abc'],
+    ['"one cent"', 'one cent'],
+    ['"0"', '0'],
+    ['"-1"', '-1'],
+    ['the number 0.01', 0.01],
+  ]
+
+  for (const [label, maxAmount] of INVALID_MAX_AMOUNTS) {
+    it(`rejects max_amount ${label} before estimating or paying`, async () => {
+      const { deps, calls } = payDeps('5.00')
+      const args = { url: 'https://provider.example.com/data', max_amount: maxAmount }
+      if (maxAmount === undefined) delete args.max_amount
+      const result = await handlePayForData(args as unknown as PayForDataArgs, deps)
+      assert.equal(result.isError, true)
+      assert.ok(errorText(result).includes('max_amount must be a positive USDC amount'))
+      assert.deepEqual(calls, { estimateCost: 0, pay: 0 })
+    })
+  }
+
+  it('rejects a 5.00 price against max_amount "0.01" without paying', async () => {
+    const { deps, calls } = payDeps('5.00')
+    const result = await handlePayForData(
+      { url: 'https://provider.example.com/data', max_amount: '0.01' },
+      deps,
+    )
+    assert.equal(result.isError, true)
+    assert.ok(errorText(result).includes('exceeds max_amount'))
+    assert.equal(calls.pay, 0)
+  })
+
+  for (const price of ['0.01', '0.0100000']) {
+    it(`pays when price "${price}" equals max_amount "0.01"`, async () => {
+      const { deps, calls } = payDeps(price)
+      const result = await handlePayForData(
+        { url: 'https://provider.example.com/data', max_amount: '0.01' },
+        deps,
+      )
+      assert.equal(result.isError, undefined)
+      assert.equal(calls.pay, 1)
+    })
+  }
+
+  it('rejects a price one stroop above max_amount', async () => {
+    const { deps, calls } = payDeps('0.0100001')
+    const result = await handlePayForData(
+      { url: 'https://provider.example.com/data', max_amount: '0.01' },
+      deps,
+    )
+    assert.equal(result.isError, true)
+    assert.ok(errorText(result).includes('exceeds max_amount'))
+    assert.equal(calls.pay, 0)
+  })
+
+  for (const price of ['abc', '0.00000001']) {
+    it(`rejects an unparseable provider price "${price}" without paying`, async () => {
+      const { deps, calls } = payDeps(price)
+      const result = await handlePayForData(
+        { url: 'https://provider.example.com/data', max_amount: '1.00' },
+        deps,
+      )
+      assert.equal(result.isError, true)
+      assert.ok(errorText(result).includes('undefined or invalid price'))
+      assert.equal(calls.pay, 0)
+    })
+  }
 })
 
 // ---------------------------------------------------------------------------
