@@ -35,6 +35,7 @@ import {
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
 import { consoleLogger, type RouteDockLogger } from '../internal/logger.js'
 import { usdcToStroops } from '../internal/usdc.js'
+import { bytesToHex, bytesToUtf8 } from '../internal/encoding.js'
 
 const MIN_REFUND_WAITING_PERIOD = 17_280
 const STREAM_CLEANUP_TIMEOUT_MS = 3_000
@@ -90,12 +91,12 @@ function defaultWebSocketFactory(
     if (typeof data === 'string') {
       handlers.onMessage(data)
     } else if (data instanceof ArrayBuffer) {
-      handlers.onMessage(Buffer.from(data).toString('utf8'))
+      handlers.onMessage(bytesToUtf8(new Uint8Array(data)))
     } else {
       // Blob or other binary — best-effort decode.
       void (data as Blob)
         .arrayBuffer()
-        .then((buffer) => handlers.onMessage(Buffer.from(buffer).toString('utf8')))
+        .then((buffer) => handlers.onMessage(bytesToUtf8(new Uint8Array(buffer))))
         .catch(() => {
           /* undecodable frame — dropped */
         })
@@ -626,7 +627,7 @@ export class MppSessionClient {
 
         let signature: Buffer
         try {
-          signature = commitmentKey.sign(Buffer.from(commitmentBytes))
+          signature = commitmentKey.sign(commitmentBytes)
         } catch (err) {
           throw new RouteDockSignatureError('Channel close commitment signing failed', {
             cause: err,
@@ -641,7 +642,7 @@ export class MppSessionClient {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 amount: currentCumulative.toString(),
-                signature: Buffer.from(signature).toString('hex'),
+                signature: bytesToHex(signature),
               }),
             })
           } catch (err) {
@@ -753,7 +754,7 @@ export class MppSessionClient {
           const commitmentBytes = (simResult as any).result?.retval?.bytes()
           if (!commitmentBytes) throw new RouteDockDisputeError('prepare_commitment returned no bytes')
 
-          const signature = commitmentKey.sign(Buffer.from(commitmentBytes))
+          const signature = commitmentKey.sign(commitmentBytes)
 
           const settleAccount = await server.getAccount(agentPublicKey)
           const settleTx = new TransactionBuilder(settleAccount, { fee: BASE_FEE, networkPassphrase: passphrase })
@@ -761,7 +762,7 @@ export class MppSessionClient {
               contract.call(
                 'settle_with_signature',
                 nativeToScVal(currentCumulative, { type: 'i128' }),
-                nativeToScVal(Buffer.from(signature)),
+                nativeToScVal(signature),
               ),
             )
             .setTimeout(30)

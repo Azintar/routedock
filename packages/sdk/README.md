@@ -64,6 +64,19 @@ const client = new RouteDockClient({
 })
 ```
 
+On Node you can use the file-backed store instead. It depends on `node:fs`, so it
+lives in a Node-only entry point and is **not** exported from `/client`:
+
+```ts
+import { RouteDockClient } from '@routedock/routedock/client'
+import { FileSpendStore } from '@routedock/routedock/node' // Node only (node:fs)
+
+const client = new RouteDockClient({
+  // ...
+  spendStore: new FileSpendStore('~/.routedock/spend.json'),
+})
+```
+
 ## Provider Usage
 
 ```ts
@@ -440,6 +453,26 @@ re-exports `routedockHono`, `mppSessionWsVerified`, `registerProvider`,
 import from `@routedock/routedock/provider` in a Workers snippet — that's the
 Node-only Express entry point and pulls in dependencies (like `express`) that
 don't run on Workers.
+
+### Runtime-neutral entry points
+
+`@routedock/routedock/client`, `/react` and `/provider/hono` use only
+Web-standard APIs. They run in browsers, Cloudflare Workers (no `nodejs_compat`
+needed for this package), Bun, Deno and Node, and contain no `node:*` imports or
+`Buffer` references. CI enforces this (`node scripts/check-runtime-neutral.mjs`)
+against the built output.
+
+Anything that needs Node built-ins is kept out of those entries:
+
+| Import | Runtime | Notes |
+| --- | --- | --- |
+| `@routedock/routedock/client`, `/react`, `/provider/hono` | any | runtime-neutral |
+| `@routedock/routedock/node` | Node only | `FileSpendStore` (`node:fs`) |
+| `@routedock/routedock/provider`, `/provider/fastify` | Node only | Express/Fastify adapters |
+| `@routedock/routedock` | Node | full SDK, includes `FileSpendStore` |
+
+Third-party dependencies are outside this guarantee: for example `mppx` imports
+`node:util`, so a Worker that uses it can still need `nodejs_compat`.
 
 ## React Integration
 
