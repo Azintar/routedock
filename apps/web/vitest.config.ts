@@ -12,7 +12,7 @@ export default defineConfig({
   test: {
     // Run only pure-logic tests — exclude Next.js page/component files which
     // require React and the Next.js runtime to import correctly.
-    include: ['lib/__tests__/**/*.test.ts'],
+    include: ['lib/__tests__/**/*.test.{ts,tsx}'],
     environment: 'node',
   },
 })
