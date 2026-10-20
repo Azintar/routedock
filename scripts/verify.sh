@@ -44,6 +44,9 @@ step "runtime-neutral bundles"
 node scripts/check-runtime-neutral.mjs --self-test >/dev/null && node scripts/check-runtime-neutral.mjs \
   || fail "a runtime-neutral entry imports a Node built-in or Buffer (see above)"
 
+step "typecheck Nulth README examples"
+pnpm --filter @routedock/nulth-sdk check:readme || fail "Nulth README examples do not typecheck"
+
 step "typecheck all packages"
 pnpm -r typecheck || fail "typecheck failed"
 

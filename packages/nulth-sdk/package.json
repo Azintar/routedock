@@ -26,7 +26,8 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/__tests__/nulth.test.ts"
+    "test": "tsx --test src/__tests__/nulth.test.ts",
+    "check:readme": "node ../../scripts/check-nulth-readme.mjs"
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0",
@@ -37,5 +38,18 @@
     "tsup": "^8.0.0",
     "tsx": "^4.22.3",
     "typescript": "^5.4.5"
-  }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "usdc",
+    "x402",
+    "mpp",
+    "payments",
+    "ai-agents",
+    "zk"
+  ]
 }
