@@ -20,7 +20,7 @@ export function FadeInUp({ children, delay = 0, className }: FadeInUpProps) {
 
     let animation: Animation | undefined
     const observer = new IntersectionObserver(([entry]) => {
-      if (!entry.isIntersecting) return
+      if (!entry?.isIntersecting) return
       observer.disconnect()
       if (preference.matches) return
       animation = element.animate(

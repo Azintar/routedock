@@ -137,7 +137,7 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
                   key={entry.id}
                   initial={reducedMotion ? false : { opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={reducedMotion ? undefined : { opacity: 0 }}
+                  exit={{ opacity: reducedMotion ? 1 : 0 }}
                   transition={{ duration: reducedMotion ? 0 : 0.2 }}
                   className="px-5 py-3 flex items-start gap-3"
                 >
