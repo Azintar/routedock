@@ -3,6 +3,13 @@
   "version": "0.3.1",
   "description": "Unified payment execution layer for autonomous agents on Stellar",
   "license": "MIT",
+  "homepage": "https://github.com/winsznx/routedock/tree/main/packages/sdk#readme",
+  "bugs": {
+    "url": "https://github.com/winsznx/routedock/issues"
+  },
+  "publishConfig": {
+    "provenance": true
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/winsznx/routedock.git",
