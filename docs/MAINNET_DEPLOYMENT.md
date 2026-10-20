@@ -214,7 +214,9 @@ The raw Wasm SHA-256 (64 hex characters / 32 bytes) must match the hash returned
 by the upload, the `new_wasm_hash` in `upgrade_proposed`, and the hash returned by
 `pending_upgrade()`. Normalize the event's byte encoding to hex before comparing.
 Stop or cancel if any differ. The GitHub artifact archive digest is a different
-hash and must not be used as the contract hash. Do not optimize or otherwise
+hash and must not be used as the contract hash. Use the downloaded CI Wasm for
+a proposed CI hash; local rebuilds are not guaranteed byte-identical across
+environments. Do not optimize or otherwise
 modify the Wasm after verification; changed bytes require a new reviewed hash.
 Keep the CI run URL, commit, local checksum, and proposal event in the upgrade
 record throughout the full timelock. This also applies to the one-time bootstrap

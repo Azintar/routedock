@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the same release bytes locally and in CI. No committed current fixture.
+# Build the pinned release target locally and in CI. No committed current fixture.
 set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"

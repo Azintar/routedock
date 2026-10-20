@@ -39,7 +39,7 @@ This mechanism gives users notice before the enforcement code changes. It does *
 
 - Rust 1.94.1 for the repository's locked Soroban dependency graph
 - `wasm32v1-none` target for release builds
-- Bash and Python 3 for the reproducible Wasm build and checksum script
+- Bash and Python 3 for the pinned Wasm build and checksum script
 - Stellar CLI (`stellar`)
 - Soroban SDK 22
 
