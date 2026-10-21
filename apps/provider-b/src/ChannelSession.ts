@@ -118,6 +118,13 @@ export class ChannelSession extends DurableObject<Env> {
 
     const app = new Hono()
 
+    // Vault settlement must outlive the DELETE request (it polls for tx
+    // confirmation), so hand the promise to the Durable Object's waitUntil.
+    // The unit-test harness constructs this class without a ctx, hence the guard.
+    const waitUntil = this.ctx
+      ? (promise: Promise<unknown>): void => { this.ctx.waitUntil(promise) }
+      : undefined
+
     app.use(
       '*',
       routedockHono({
@@ -134,6 +141,12 @@ export class ChannelSession extends DurableObject<Env> {
         commitmentPublicKey,
         sessionStore,
         manifest,
+        // Optional: record session_settled on the agent vault after each
+        // clean close so the vault's audit trail shows the session.
+        ...(env.AGENT_VAULT_CONTRACT_ID
+          ? { vaultSettlement: { contract: env.AGENT_VAULT_CONTRACT_ID } }
+          : {}),
+        ...(waitUntil ? { waitUntil } : {}),
         ...sessionWriters,
       }),
     )
