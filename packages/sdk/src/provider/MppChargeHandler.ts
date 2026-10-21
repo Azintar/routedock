@@ -6,10 +6,12 @@ import { resolvePayee } from '../internal/payee.js'
 import { extractPayerAddress } from './payer.js'
 import type { SessionStore } from '../store/SessionStore.js'
 import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
+import { base64ToUtf8 } from '../internal/encoding.js'
 import {
   InMemorySeenTxStore,
   paymentIdempotencyKey,
   checkSettlementReplay,
+  recordSettlement,
   type SeenTxStore,
 } from './SeenTxStore.js'
 import { resolveAssetContract } from '../internal/assetUtils.js'
@@ -92,7 +94,7 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
             .find((p) => p.trim().startsWith('credential='))
           if (credPart) {
             const b64 = credPart.split('=').slice(1).join('=').replace(/^"|"$/g, '')
-            const credJson = Buffer.from(b64, 'base64').toString('utf8')
+            const credJson = base64ToUtf8(b64)
             const cred = JSON.parse(credJson) as {
               sender?: string
               payload?: { sender?: string; from?: string }
@@ -175,7 +177,7 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
       if (receiptHeader) {
         try {
           const parsed = JSON.parse(
-            Buffer.from(receiptHeader, 'base64').toString('utf8'),
+            base64ToUtf8(receiptHeader),
           ) as { reference?: string }
           reference = parsed.reference
         } catch {
@@ -185,11 +187,12 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
 
       // Record the settlement so a retry of this exact charge is deduped.
       if (idempotencyKey) {
-        await seenTxStore.set(idempotencyKey, {
-          txHash: reference ?? null,
-          headers: receiptHeaders,
-          createdAt: Date.now(),
-        })
+        await recordSettlement(
+          seenTxStore,
+          idempotencyKey,
+          { txHash: reference ?? null, headers: receiptHeaders, createdAt: Date.now() },
+          { logger, label: '[mpp-charge]', onCallbackError: opts.onCallbackError },
+        )
       }
 
       if (reference && opts.onSettled) {
