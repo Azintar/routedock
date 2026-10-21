@@ -16,12 +16,13 @@ export function FadeInUp({ children, delay = 0, className }: FadeInUpProps) {
     const element = ref.current
     const preference = window.matchMedia('(prefers-reduced-motion: reduce)')
     // Progressive enhancement: server HTML and already-visible content stay visible.
-    if (!element || preference.matches || !('IntersectionObserver' in window) || !element.animate || element.getBoundingClientRect().top < window.innerHeight) return
+    if (!element) return
+    if (preference.matches || !('IntersectionObserver' in window) || !element.animate || element.getBoundingClientRect().top < window.innerHeight) return
 
     let animation: Animation | undefined
     function clearStyles() {
-      element!.style.removeProperty('opacity')
-      element!.style.removeProperty('transform')
+      element.style.removeProperty('opacity')
+      element.style.removeProperty('transform')
     }
     // Only hydrated, below-the-fold content is hidden while awaiting intersection.
     element.style.opacity = '0'
