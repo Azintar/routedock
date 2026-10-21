@@ -301,6 +301,10 @@ wrangler secret put CHANNEL_CONTRACT_ID
 wrangler secret put COMMITMENT_PUBLIC_KEY
 wrangler secret put SUPABASE_SERVICE_KEY
 wrangler secret put USDC_ASSET_CONTRACT
+# Optional — agent vault contract (the same AGENT_VAULT_CONTRACT_ID from the
+# vault deploy step above). When set, the provider records session_settled on
+# the vault after each clean mpp-session close.
+wrangler secret put AGENT_VAULT_CONTRACT_ID
 ```
 
 Deploy Provider B:

@@ -4,7 +4,11 @@ import { stellar, close as channelClose, Store } from '@stellar/mpp/channel/serv
 import { Mppx, Request as MppxRequest } from 'mppx/server'
 import { Store as MppxStore } from 'mppx'
 import type { RouteDockManifest } from '../types.js'
-import { buildSessionSettlementTransaction, resolveVaultSettlementAddresses } from './internal/vaultSettlement.js'
+import { recordSessionSettlement } from './internal/vaultSettlement.js'
+import {
+  resolveVaultSettlementConfig,
+  type VaultSettlementConfig,
+} from '../internal/vaultConfig.js'
 import { extractPayerAddress } from './payer.js'
 import {
   channelAuthorizer,
@@ -90,6 +94,13 @@ export interface MppSessionHandlerOptions {
   idleTimeoutMs?: number
   /** Log sink for internal error paths. Defaults to a console-backed logger. */
   logger?: RouteDockLogger
+  /**
+   * Record `session_settled` on the agent vault after each clean close.
+   * `contract` is the vault's C... id; `rpcUrl` overrides the default Soroban
+   * RPC endpoint for the configured network. Falls back to the deprecated
+   * `AGENT_VAULT_CONTRACT`/`AGENT_VAULT_CONTRACT_ID` env vars when unset.
+   */
+  vaultSettlement?: VaultSettlementConfig
 }
 
 export function createMppSessionHandler(opts: MppSessionHandlerOptions): RequestHandler {
@@ -283,6 +294,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
 
         if (closeAmount > 0n && closeSig) {
           const closePayer = record?.payer ?? null
+          const vouchersClosed = voucherCount
           const closeTxHash = await channelClose({
             channel: opts.channelFactory,
             amount: closeAmount,
@@ -303,49 +315,31 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
             })
           }
 
-          // Optionally record session_settled on the agent vault.
-          // The vault authorizes this call with the allowlisted payee's own key,
-          // so the payee is the transaction source and signs it. Requires the
-          // AGENT_VAULT_CONTRACT env var only — the vault admin secret is never
-          // read, so a provider never holds the key that guards upgrade().
-          const vaultContract = process.env.AGENT_VAULT_CONTRACT
-          if (vaultContract) {
-            const settlementAddresses = resolveVaultSettlementAddresses(
-              closePayer,
-              payeeKeypair.publicKey(),
-            )
-            if (!settlementAddresses) {
-              logger('warn', '[mpp-session] skipped session_settled vault record: payer address unavailable')
-            } else {
-              try {
-                const { Networks } = await import('@stellar/stellar-sdk')
-                const { Server } = await import('@stellar/stellar-sdk/rpc')
-                const networkPassphrase = opts.network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
-                const rpcUrl = opts.network === 'mainnet'
-                  ? 'https://mainnet.sorobanrpc.com'
-                  : 'https://soroban-testnet.stellar.org'
-                const server = new Server(rpcUrl)
-                const payeePublicKey = payeeKeypair.publicKey()
-                const sourceAccount = await server.getAccount(payeePublicKey)
-                const tx = buildSessionSettlementTransaction(
-                  sourceAccount,
-                  vaultContract,
-                  opts.channelFactory,
-                  settlementAddresses,
-                  closeAmount,
-                  voucherCount,
-                  networkPassphrase,
-                )
-                const preparedTx = await server.prepareTransaction(tx)
-                preparedTx.sign(payeeKeypair)
-                await server.sendTransaction(preparedTx)
-              } catch (recordErr) {
-                logger('error', '[mpp-session] failed to record session_settled on vault', { error: recordErr })
-              }
-            }
-          }
-
+          // Respond before the vault record so confirmation polling can never
+          // delay the close response.
           res.json({ closeTxHash })
+
+          // Optionally record session_settled on the agent vault. The vault
+          // authorizes this call with the allowlisted payee's own key — the
+          // transaction source — so the payee secret is the only key held and
+          // the vault admin secret is never read. recordSessionSettlement
+          // never throws; it logs failures with the tx hash and reason and
+          // reports them through onCallbackError.
+          const vaultConfig = resolveVaultSettlementConfig(opts.vaultSettlement, logger)
+          if (vaultConfig) {
+            await recordSessionSettlement(
+              {
+                config: vaultConfig,
+                network: opts.network,
+                payeeSecretKey: opts.payeeSecretKey,
+                channelId: opts.channelFactory,
+                payer: closePayer,
+                amount: closeAmount,
+                voucherCount: vouchersClosed,
+              },
+              { logger, onCallbackError: opts.onCallbackError },
+            )
+          }
         } else {
           res.json({ closeTxHash: null, message: 'no vouchers received' })
         }

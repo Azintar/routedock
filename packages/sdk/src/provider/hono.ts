@@ -37,6 +37,11 @@ import {
 import { resolveAssetContract } from '../internal/assetUtils.js'
 import { RouteDockManifestError } from '../errors.js'
 import { readSettleResult } from './settleResult.js'
+import { recordSessionSettlement } from './internal/vaultSettlement.js'
+import {
+  resolveVaultSettlementConfig,
+  type VaultSettlementConfig,
+} from '../internal/vaultConfig.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -88,6 +93,20 @@ export interface RouteDockHonoOptions {
   sessionStore?: Store.Store
   /** Log sink for internal error paths. Defaults to a console-backed logger. */
   logger?: RouteDockLogger
+  /**
+   * Record `session_settled` on the agent vault after each clean mpp-session
+   * close. `contract` is the vault's C... id; `rpcUrl` overrides the default
+   * Soroban RPC endpoint for the configured network. The vault authorizes
+   * the record with the payee's own key, so no admin secret is ever held.
+   */
+  vaultSettlement?: VaultSettlementConfig
+  /**
+   * Receives background promises (currently the vault settlement record) so
+   * the runtime keeps the request alive until they finish — pass
+   * `ctx.waitUntil` on Cloudflare Workers. Without it, settlement still runs
+   * but the runtime may evict the isolate before it completes.
+   */
+  waitUntil?: (promise: Promise<unknown>) => void
 }
 
 function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
@@ -718,6 +737,30 @@ function createMppSessionHandlerState(
           })
         }
 
+        // Record session_settled on the agent vault. Fire-and-forget: it must
+        // never delay or fail the close response — recordSessionSettlement
+        // never throws and reports failures itself. Started before the state
+        // reset below so the request captures this session's values, and
+        // handed to waitUntil when the caller provides one so the runtime
+        // keeps the isolate alive until the record lands.
+        const vaultConfig = resolveVaultSettlementConfig(opts.vaultSettlement, logger)
+        if (vaultConfig) {
+          const settlement = recordSessionSettlement(
+            {
+              config: vaultConfig,
+              network: opts.network,
+              payeeSecretKey: opts.payeeSecretKey,
+              channelId: sessionPricing.channelFactory,
+              payer: closePayer,
+              amount: closeAmount,
+              voucherCount,
+            },
+            { logger, onCallbackError: opts.onCallbackError },
+          )
+          if (opts.waitUntil) opts.waitUntil(settlement)
+          else void settlement
+        }
+
         sessionOpened = false
         voucherCount = 0
         record = null
@@ -891,6 +934,7 @@ export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
 
 export { registerProvider, type RegisterProviderOptions } from './registerProvider.js'
 export { signManifest } from '../manifest/sign.js'
+export type { VaultSettlementConfig } from '../internal/vaultConfig.js'
 export {
   SupabaseSeenTxStore,
 } from '../store/SupabaseSeenTxStore.js'
