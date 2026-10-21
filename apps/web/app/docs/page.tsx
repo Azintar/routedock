@@ -1,12 +1,13 @@
-import type { Metadata } from 'next'
+import { pageMetadata } from '@/lib/metadata'
 import Link from 'next/link'
 import { ArrowLeft, Package, Server, Bot, Shield, Search, Terminal, type LucideIcon } from 'lucide-react'
 import { DOCS_MANIFEST_EXAMPLE } from '@/lib/docsManifestExample'
 
-export const metadata: Metadata = {
-  title: 'Docs',
-  description: 'RouteDock SDK documentation — agent client, provider middleware, manifest standard, and contract account policies.',
-}
+export const metadata = pageMetadata(
+  'Docs',
+  'RouteDock SDK documentation — agent client, provider middleware, manifest standard, and contract account policies.',
+  '/docs',
+)
 
 function Section({ id, icon: Icon, title, children }: { id: string; icon: LucideIcon; title: string; children: React.ReactNode }) {
   return (
