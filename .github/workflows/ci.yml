@@ -112,13 +112,13 @@ jobs:
       - name: Guard release.yml permissions
         # release.yml has twice regressed to missing the permissions that make
         # Changesets and the release watchdog work (#255, fixed in 8f3d82b).
-        # Fail fast if either goes missing again.
+        # Fail fast if release publishing or provenance permissions go missing.
         # Matches only real YAML keys, anchored to start-of-line indentation.
         # A substring grep also matches the explanatory comments above the
         # permissions block in release.yml, so it would pass even with the
         # block deleted.
         run: |
-          for perm in "contents" "pull-requests"; do
+          for perm in "contents" "pull-requests" "id-token"; do
             if ! grep -qE "^[[:space:]]+${perm}:[[:space:]]*write[[:space:]]*$" .github/workflows/release.yml; then
               echo "::error file=.github/workflows/release.yml::missing required permission '${perm}: write'"
               exit 1
@@ -128,6 +128,9 @@ jobs:
             echo "::error file=.github/workflows/release.yml::the release App token must request 'permission-workflows: write'"
             exit 1
           fi
+
+      - name: Test release permission guard
+        run: node --test scripts/release-permissions.test.mjs
 
   lint:
     runs-on: ubuntu-latest
