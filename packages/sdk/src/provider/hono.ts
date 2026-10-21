@@ -85,7 +85,7 @@ export interface RouteDockHonoOptions {
    * Defaults to an in-memory store per handler; supply a durable store (e.g.
    * Durable Object storage) so voucher tracking survives isolate eviction.
    */
-  sessionStore?: Store.Store
+  sessionStore?: Store.Store | undefined
   /** Log sink for internal error paths. Defaults to a console-backed logger. */
   logger?: RouteDockLogger
 }
@@ -510,6 +510,7 @@ function createMppSessionHandlerState(
   let record: VerifiedVoucherRecord | null = null
   let voucherCount = 0
   let sessionOpened = false
+  let orphanFlagged = false
   let idleTimer: ReturnType<typeof setTimeout> | null = null
   let settledCleanly = false
   let abortListenerArmed = false
@@ -542,12 +543,26 @@ function createMppSessionHandlerState(
     if (record) return record
     try {
       const stored = (await innerStore.get(voucherRecordKey)) as
-        | { amount?: string; signature?: string; payer?: string | null }
+        | {
+            amount?: string
+            signature?: string
+            payer?: string | null
+            voucherCount?: number
+            sessionOpened?: boolean
+          }
         | undefined
       if (!stored || typeof stored.amount !== 'string' || typeof stored.signature !== 'string') {
         return null
       }
       record = { amount: BigInt(stored.amount), signature: stored.signature, payer: stored.payer ?? null }
+      if (typeof stored.voucherCount === 'number') {
+        voucherCount = stored.voucherCount
+      }
+      if (typeof stored.sessionOpened === 'boolean') {
+        sessionOpened = stored.sessionOpened
+      } else if (record !== null) {
+        sessionOpened = true
+      }
     } catch {
       // Corrupt or unreadable persisted record — proceed as though there is none.
       return null
@@ -558,8 +573,8 @@ function createMppSessionHandlerState(
   // Flag an open-but-unsettled session for the reconciler. Idempotent.
   async function flagOrphan(reason: 'connection-closed' | 'idle-timeout'): Promise<void> {
     await loadPersistedRecord()
-    if (!sessionOpened || settledCleanly) return
-    sessionOpened = false
+    if (!sessionOpened || settledCleanly || orphanFlagged) return
+    orphanFlagged = true
     abortListenerArmed = false
     clearIdleTimer()
 
@@ -611,19 +626,25 @@ function createMppSessionHandlerState(
 
     const payer = record?.payer ?? extractPayerAddress(credential.source)
     record = { amount, signature: payload.signature, payer }
-    await innerStore.put(voucherRecordKey, {
-      amount: record.amount.toString(),
-      signature: record.signature,
-      payer: record.payer,
-    })
 
     voucherCount++
     // Voucher activity — this session is alive again.
     settledCleanly = false
+    orphanFlagged = false
     armIdleTimer()
 
-    if (!sessionOpened) {
-      sessionOpened = true
+    const wasOpened = sessionOpened
+    sessionOpened = true
+
+    await innerStore.put(voucherRecordKey, {
+      amount: record.amount.toString(),
+      signature: record.signature,
+      payer: record.payer,
+      voucherCount,
+      sessionOpened: true,
+    })
+
+    if (!wasOpened) {
       if (opts.onSessionOpen) {
         Promise.resolve()
           .then(() => opts.onSessionOpen!(sessionPricing.channelFactory, record!.payer))
@@ -720,6 +741,7 @@ function createMppSessionHandlerState(
 
         sessionOpened = false
         voucherCount = 0
+        orphanFlagged = false
         record = null
         await innerStore.delete(voucherRecordKey)
         abortListenerArmed = false
