@@ -40,7 +40,7 @@ Create a `.env` file (e.g., `~/.routedock/.env`):
 ```bash
 # Required
 STELLAR_SECRET="SDU5..."  # Use a dedicated low-balance testnet key for safety
-STELLAR_NETWORK="testnet"  # or "mainnet"
+STELLAR_NETWORK="testnet"  # "testnet" (default) or "mainnet" (aliases: "pubnet", "public")
 ROUTEDOCK_DAILY_CAP="1.00" # Required: Maximum daily spend in USDC
 
 # Optional (for session mode)
