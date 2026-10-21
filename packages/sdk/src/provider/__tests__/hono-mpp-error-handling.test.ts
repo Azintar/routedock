@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { Hono } from 'hono'
 import { Keypair } from '@stellar/stellar-sdk'
 import type { RouteDockManifest } from '../../types.js'
-import type { RouteDockLogger } from '../../internal/logger.js'
+import type { RouteDockLogger, RouteDockLogFields } from '../../internal/logger.js'
 
 const payeeKeypair = Keypair.random()
 const commitKeypair = Keypair.random()
@@ -122,7 +122,7 @@ const BASE_OPTS = {
   manifest,
 }
 
-let logCalls: Array<{ level: string; message: string; fields?: Record<string, unknown> }> = []
+let logCalls: Array<{ level: string; message: string; fields?: RouteDockLogFields | undefined }> = []
 const logger: RouteDockLogger = (level, message, fields) => {
   logCalls.push({ level, message, fields })
 }
@@ -189,4 +189,6 @@ describe('routedockHono — mpp error handling', () => {
     assert.equal(logCalls[0]!.level, 'error')
     assert.equal((logCalls[0]!.fields?.error as Error).message, 'rpc outage')
   })
+
+  
 })
