@@ -203,5 +203,17 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install
+      - name: Legacy package name guard
+        # The package is published as @routedock/routedock. The old unpublished
+        # name (the one with "sdk" as the last path segment) does not exist on
+        # npm; keep it out of the tree except in CHANGELOG.md and MIGRATION.md,
+        # which record history. The [d] keeps this guard from matching itself.
+        run: |
+          if grep -rn "@routedock/s[d]k" \
+              --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist \
+              --exclude=CHANGELOG.md --exclude=MIGRATION.md .; then
+            echo "Found legacy package name references (use @routedock/routedock instead)"
+            exit 1
+          fi
       - name: Lint
         run: pnpm -r lint

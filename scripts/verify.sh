@@ -34,6 +34,18 @@ pnpm install --frozen-lockfile --prefer-offline >/dev/null 2>&1 \
   || fail "pnpm-lock.yaml is out of date with a package.json. Run 'pnpm install' at the root and commit the lockfile."
 echo "  ok"
 
+step "no legacy package name references"
+# The package is published as @routedock/routedock. The old unpublised name
+# (the one with "sdk" as the last path segment) does not exist on npm, so any
+# copy-paste from it fails. The [d] keeps this guard from matching itself.
+# CHANGELOG.md and MIGRATION.md keep historical references.
+if grep -rn "@routedock/s[d]k" \
+    --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist \
+    --exclude=CHANGELOG.md --exclude=MIGRATION.md .; then
+  fail "Found legacy @routedock/s[d]k references (use @routedock/routedock instead)"
+fi
+echo "  ok"
+
 step "build sdk packages"
 pnpm --filter @routedock/nulth-sdk build >/dev/null || fail "@routedock/nulth-sdk failed to build"
 pnpm --filter @routedock/routedock build >/dev/null || fail "@routedock/routedock failed to build"
