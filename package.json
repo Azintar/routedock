@@ -28,7 +28,12 @@
   },
   "pnpm": {
     "overrides": {
-      "axios@>=1.0.0 <1.20.0": "^1.20.0"
+      "axios@>=1.0.0 <1.20.0": "^1.20.0",
+      "@x402/stellar": "2.9.0",
+      "@x402/core": "2.9.0"
+    },
+    "patchedDependencies": {
+      "axios@1.20.0": "patches/axios@1.20.0.patch"
     }
   }
 }
