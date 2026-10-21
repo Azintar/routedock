@@ -191,5 +191,17 @@
     "tsx": "^4.22.3",
     "typescript": "^5.4.5",
     "viem": "^2.52.0"
-  }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "usdc",
+    "x402",
+    "mpp",
+    "payments",
+    "ai-agents"
+  ]
 }
