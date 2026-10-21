@@ -9,6 +9,7 @@ import type { RouteDockManifest, PaymentMode } from '../types.js'
 import type { SeenTxStore } from './SeenTxStore.js'
 import type { OrphanedSessionInfo } from './MppSessionHandler.js'
 import type { RouteDockLogger } from '../internal/logger.js'
+import type { VaultSettlementOptions } from './internal/vaultSettlement.js'
 
 export interface RouteDockFastifyOptions {
   modes: PaymentMode[]
@@ -37,6 +38,8 @@ export interface RouteDockFastifyOptions {
    * callback failures, orphaned sessions). Defaults to a console-backed logger.
    */
   logger?: RouteDockLogger
+  /** Agent vault configuration for recording session_settled after a clean close. */
+  vaultSettlement?: VaultSettlementOptions
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +268,7 @@ export function routedockFastify(opts: RouteDockFastifyOptions): FastifyPluginAs
           ...(opts.onOrphaned ? { onOrphaned: opts.onOrphaned } : {}),
           ...(opts.idleTimeoutMs != null ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
           ...(opts.logger ? { logger: opts.logger } : {}),
+          ...(opts.vaultSettlement ? { vaultSettlement: opts.vaultSettlement } : {}),
         }),
       )
     }

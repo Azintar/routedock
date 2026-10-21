@@ -4,7 +4,12 @@ import { stellar, close as channelClose, Store } from '@stellar/mpp/channel/serv
 import { Mppx, Request as MppxRequest } from 'mppx/server'
 import { Store as MppxStore } from 'mppx'
 import type { RouteDockManifest } from '../types.js'
-import { buildSessionSettlementTransaction, resolveVaultSettlementAddresses } from './internal/vaultSettlement.js'
+import {
+  recordSessionSettlement,
+  resolveVaultSettlementAddresses,
+  settlementOutcomeError,
+  type VaultSettlementOptions,
+} from './internal/vaultSettlement.js'
 import { extractPayerAddress } from './payer.js'
 import {
   channelAuthorizer,
@@ -89,6 +94,15 @@ export interface MppSessionHandlerOptions {
   idleTimeoutMs?: number
   /** Log sink for internal error paths. Defaults to a console-backed logger. */
   logger?: RouteDockLogger
+  /**
+   * Agent vault configuration for recording `session_settled` after a clean
+   * close. When set, the SDK builds, signs, sends and confirms the vault
+   * transaction via the shared recordSessionSettlement helper (failures are
+   * logged and reported through onCallbackError, never thrown into the close
+   * response). Replaces the SDK's former process-wide AGENT_VAULT_CONTRACT
+   * env lookup.
+   */
+  vaultSettlement?: VaultSettlementOptions
 }
 
 export function createMppSessionHandler(opts: MppSessionHandlerOptions): RequestHandler {
@@ -304,11 +318,11 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
 
           // Optionally record session_settled on the agent vault.
           // The vault authorizes this call with the allowlisted payee's own key,
-          // so the payee is the transaction source and signs it. Requires the
-          // AGENT_VAULT_CONTRACT env var only — the vault admin secret is never
-          // read, so a provider never holds the key that guards upgrade().
-          const vaultContract = process.env.AGENT_VAULT_CONTRACT
-          if (vaultContract) {
+          // so the payee is the transaction source and signs it. Configured
+          // per handler via the vaultSettlement option — the SDK reads no
+          // env vars, and the vault admin secret is never read, so a provider
+          // never holds the key that guards upgrade().
+          if (opts.vaultSettlement) {
             const settlementAddresses = resolveVaultSettlementAddresses(
               closePayer,
               payeeKeypair.publicKey(),
@@ -316,30 +330,18 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
             if (!settlementAddresses) {
               logger('warn', '[mpp-session] skipped session_settled vault record: payer address unavailable')
             } else {
-              try {
-                const { Networks } = await import('@stellar/stellar-sdk')
-                const { Server } = await import('@stellar/stellar-sdk/rpc')
-                const networkPassphrase = opts.network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
-                const rpcUrl = opts.network === 'mainnet'
-                  ? 'https://mainnet.sorobanrpc.com'
-                  : 'https://soroban-testnet.stellar.org'
-                const server = new Server(rpcUrl)
-                const payeePublicKey = payeeKeypair.publicKey()
-                const sourceAccount = await server.getAccount(payeePublicKey)
-                const tx = buildSessionSettlementTransaction(
-                  sourceAccount,
-                  vaultContract,
-                  opts.channelFactory,
-                  settlementAddresses,
-                  closeAmount,
-                  voucherCount,
-                  networkPassphrase,
-                )
-                const preparedTx = await server.prepareTransaction(tx)
-                preparedTx.sign(payeeKeypair)
-                await server.sendTransaction(preparedTx)
-              } catch (recordErr) {
-                logger('error', '[mpp-session] failed to record session_settled on vault', { error: recordErr })
+              const outcome = await recordSessionSettlement({
+                options: opts.vaultSettlement,
+                channelId: opts.channelFactory,
+                addresses: settlementAddresses,
+                amount: closeAmount,
+                voucherCount,
+                network: opts.network,
+                sourceKeypair: payeeKeypair,
+                logger,
+              })
+              if (outcome.status !== 'confirmed') {
+                opts.onCallbackError?.(settlementOutcomeError(outcome), 'sessionSettlement')
               }
             }
           }
