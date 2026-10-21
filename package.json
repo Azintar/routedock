@@ -8,7 +8,7 @@
     "lint": "pnpm -r lint",
     "stress:test": "pnpm --filter agent stress",
     "version": "changeset version",
-    "release": "pnpm run release:build && changeset publish",
+    "release": "pnpm run release:build && bash scripts/check-pack.sh && changeset publish",
     "release:build": "pnpm --filter @routedock/nulth-sdk build && pnpm --filter @routedock/routedock build && pnpm --filter @routedock/mcp-server build",
     "check:runtime": "node scripts/check-runtime-neutral.mjs",
     "verify": "bash scripts/verify.sh",

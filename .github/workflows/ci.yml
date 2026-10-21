@@ -104,6 +104,11 @@ jobs:
           npx --yes @arethetypeswrong/cli@0.18.5 --pack packages/nulth-sdk
           npx --yes @arethetypeswrong/cli@0.18.5 --pack packages/sdk
 
+      - name: Check package hygiene and entry points
+        run: |
+          node --test scripts/check-pack.test.mjs
+          bash scripts/check-pack.sh
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
