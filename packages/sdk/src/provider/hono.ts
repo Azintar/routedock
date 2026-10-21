@@ -26,7 +26,11 @@ import {
   type ChannelVerifyCredential,
 } from './mppCompatibility.js'
 import type { Method } from 'mppx'
-import { type ChannelStore, type OrphanedSessionInfo } from './MppSessionHandler.js'
+import {
+  isVoucherStoreValue,
+  type ChannelStore,
+  type OrphanedSessionInfo,
+} from './MppSessionHandler.js'
 import { base64ToUtf8, hexToBytes } from './encoding.js'
 import {
   InMemorySeenTxStore,
@@ -37,6 +41,12 @@ import {
 import { resolveAssetContract } from '../internal/assetUtils.js'
 import { RouteDockManifestError } from '../errors.js'
 import { readSettleResult } from './settleResult.js'
+import {
+  recordSessionSettlement,
+  resolveVaultSettlementAddresses,
+  settlementOutcomeError,
+  type VaultSettlementOptions,
+} from './internal/vaultSettlement.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -88,6 +98,21 @@ export interface RouteDockHonoOptions {
   sessionStore?: Store.Store
   /** Log sink for internal error paths. Defaults to a console-backed logger. */
   logger?: RouteDockLogger
+  /**
+   * Agent vault configuration for recording `session_settled` after a clean
+   * mpp-session close. When set, the SDK submits and confirms the vault call
+   * without blocking the close response (kept alive via {@link waitUntil});
+   * failures are logged and reported through onCallbackError, never thrown
+   * into the close response. Replaces the SDK's former process-wide
+   * AGENT_VAULT_CONTRACT env lookup, which was unreachable on Workers.
+   */
+  vaultSettlement?: VaultSettlementOptions
+  /**
+   * Host waitUntil callback (e.g. Cloudflare `ctx.waitUntil`) used to keep
+   * background work (the vault settlement) alive past the close response.
+   * Omit to use a plain background promise.
+   */
+  waitUntil?: (promise: Promise<unknown>) => void
 }
 
 function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
@@ -465,7 +490,7 @@ export function mppSessionWsVerified(c: { get: (key: string) => unknown }): bool
 /** Contexts the shared session state is invoked with (subset of hono's Context). */
 interface DeleteContext {
   req: { json(): Promise<unknown> }
-  json: (data: unknown) => Response
+  json: (data: unknown, status?: number) => Response
 }
 interface SignalContext {
   req: { raw: { signal?: AbortSignal } }
@@ -487,11 +512,22 @@ interface MppSessionHandlerState {
   armAbortGuard(c: SignalContext): void
 }
 
-/** The last verified voucher: amount, its signature, and the payer it named. */
+/**
+ * The last verified voucher plus this handler's session bookkeeping: amount,
+ * its signature, the payer it named, the running voucher count, and whether
+ * the session has been reported as open via onSessionOpen. Persisted to the
+ * session store under {@link voucherRecordKey} so a rebuilt handler instance
+ * (Durable Object eviction, redeploy) continues the session instead of
+ * treating it as fresh — the remaining half of #211.
+ */
 interface VerifiedVoucherRecord {
   amount: bigint
   signature: string
   payer: string | null
+  /** Number of verified vouchers committed in this session so far. */
+  voucherCount: number
+  /** Whether onSessionOpen has already fired for this session. */
+  opened: boolean
 }
 
 function createMppSessionHandlerState(
@@ -505,9 +541,14 @@ function createMppSessionHandlerState(
   const voucherRecordKey = `routedock:session:voucher:${sessionPricing.channelFactory}`
 
   const innerStore = opts.sessionStore ?? Store.memory()
+  // mppx's cumulative entry for this channel — the floor a DELETE close may
+  // never go below. Written by mppx itself through wrappedStore.put on every
+  // voucher it verifies, independent of this handler's record.
+  const cumulativeKey = `stellar:channel:cumulative:${sessionPricing.channelFactory}`
   // The last voucher mppx actually verified — amount, its signature, and the
-  // payer it named. Only `commit` (called after a successful verify) may set
-  // this; nothing derived from an unverified header may reach it.
+  // payer it named, plus the session bookkeeping (counts, opened). Only
+  // `commit` (called after a successful verify) may set this; nothing
+  // derived from an unverified header may reach it.
   let record: VerifiedVoucherRecord | null = null
   let voucherCount = 0
   let sessionOpened = false
@@ -537,18 +578,37 @@ function createMppSessionHandlerState(
   // `record` lives only in this instance's memory. A Durable Object (or any
   // other host that can evict and recreate this closure between requests)
   // loses it even though `commit` persisted it to `innerStore` — so any path
-  // that reads `record` must first try to reload it from the store. Never
-  // overwrites an in-memory record that is already set.
+  // that reads `record` must first try to reload it from the store. On a
+  // store hit, the session bookkeeping (voucher count, opened flag) is
+  // restored from the record too. Never overwrites an in-memory record that
+  // is already set.
   async function loadPersistedRecord(): Promise<VerifiedVoucherRecord | null> {
     if (record) return record
     try {
       const stored = (await innerStore.get(voucherRecordKey)) as
-        | { amount?: string; signature?: string; payer?: string | null }
+        | {
+            amount?: string
+            signature?: string
+            payer?: string | null
+            voucherCount?: number
+            opened?: boolean
+          }
         | undefined
       if (!stored || typeof stored.amount !== 'string' || typeof stored.signature !== 'string') {
         return null
       }
-      record = { amount: BigInt(stored.amount), signature: stored.signature, payer: stored.payer ?? null }
+      record = {
+        amount: BigInt(stored.amount),
+        signature: stored.signature,
+        payer: stored.payer ?? null,
+        voucherCount: typeof stored.voucherCount === 'number' ? stored.voucherCount : 0,
+        // A record's presence means the session was live: never re-announce an
+        // open for a restored session (a record written before the count/opened
+        // fields existed still refers to an open session).
+        opened: stored.opened ?? true,
+      }
+      voucherCount = record.voucherCount
+      sessionOpened = record.opened
     } catch {
       // Corrupt or unreadable persisted record — proceed as though there is none.
       return null
@@ -611,20 +671,37 @@ function createMppSessionHandlerState(
     if (record && amount < record.amount) return
 
     const payer = record?.payer ?? extractPayerAddress(credential.source)
-    record = { amount, signature: payload.signature, payer }
-    await innerStore.put(voucherRecordKey, {
-      amount: record.amount.toString(),
-      signature: record.signature,
-      payer: record.payer,
-    })
+    record = { amount, signature: payload.signature, payer, voucherCount: 0, opened: false }
 
     voucherCount++
+    record.voucherCount = voucherCount
     // Voucher activity — this session is alive again.
     settledCleanly = false
     armIdleTimer()
 
+    let fireSessionOpen = false
     if (!sessionOpened) {
       sessionOpened = true
+      fireSessionOpen = true
+    }
+    // The record must carry the session's persistent open state (true as soon
+    // as any voucher has been committed), not just whether THIS commit is the
+    // first — otherwise a later voucher overwrites `opened: true` written by
+    // the first one and a rebuilt instance re-announces the session.
+    record.opened = sessionOpened
+
+    // Persist BEFORE the (async) callbacks: the callbacks are fire-and-forget
+    // promises, so a rebuilt instance must see the advanced record whether or
+    // not they have run.
+    await innerStore.put(voucherRecordKey, {
+      amount: record.amount.toString(),
+      signature: record.signature,
+      payer: record.payer,
+      voucherCount: record.voucherCount,
+      opened: record.opened,
+    })
+
+    if (fireSessionOpen) {
       if (opts.onSessionOpen) {
         Promise.resolve()
           .then(() => opts.onSessionOpen!(sessionPricing.channelFactory, record!.payer))
@@ -694,6 +771,28 @@ function createMppSessionHandlerState(
       }
 
       if (closeAmount > 0n && closeSig) {
+        // Floor: a DELETE close must never broadcast below the highest voucher
+        // mppx recorded for this channel. The record usually already covers
+        // this, but a rebuilt instance over pre-upgrade data (or a failed
+        // record write) has no record — read mppx's cumulative entry directly
+        // and refuse a close below it rather than trusting the client.
+        let storedCumulative: bigint | null = null
+        try {
+          const raw = await innerStore.get(cumulativeKey)
+          if (isVoucherStoreValue(raw)) storedCumulative = BigInt(raw.amount)
+        } catch {
+          // unreadable store entry — no floor available, close proceeds
+        }
+        if (storedCumulative !== null && closeAmount < storedCumulative) {
+          return c.json(
+            {
+              closeTxHash: null,
+              error: 'close amount below the highest verified voucher',
+            },
+            409,
+          )
+        }
+
         const closeTxHash = await channelClose({
           channel: sessionPricing.channelFactory,
           amount: closeAmount,
@@ -719,11 +818,44 @@ function createMppSessionHandlerState(
           })
         }
 
-        sessionOpened = false
-        voucherCount = 0
-        record = null
-        await innerStore.delete(voucherRecordKey)
-        abortListenerArmed = false
+        // Record session_settled on the agent vault when configured. Runs in
+        // the background (waitUntil when the host provides one) so the close
+        // response never waits on the vault: the helper never throws and
+        // reports every failure through the logger + onCallbackError.
+        if (opts.vaultSettlement) {
+          const addresses = resolveVaultSettlementAddresses(closePayer, payeeKeypair.publicKey())
+          if (!addresses) {
+            logger('warn', '[mpp-session] skipped session_settled vault record: payer address unavailable')
+          } else {
+            const settlement = recordSessionSettlement({
+              options: opts.vaultSettlement,
+              channelId: sessionPricing.channelFactory,
+              addresses,
+              amount: closeAmount,
+              voucherCount,
+              network: opts.network,
+              sourceKeypair: payeeKeypair,
+              logger,
+            }).then((outcome) => {
+              if (outcome.status !== 'confirmed') {
+                opts.onCallbackError?.(settlementOutcomeError(outcome), 'sessionSettlement')
+              }
+            })
+            if (opts.waitUntil) opts.waitUntil(settlement)
+            else void settlement
+          }
+        }
+
+      sessionOpened = false
+      voucherCount = 0
+      record = null
+      // Clear both pieces of stored session state: the routedock record (the
+      // rebuilt handler's "open session" memory) and mppx's cumulative entry,
+      // which a fresh channel over the same factory would otherwise read as a
+      // stale floor.
+      await innerStore.delete(voucherRecordKey)
+      await innerStore.delete(cumulativeKey)
+      abortListenerArmed = false
 
         return c.json({ closeTxHash })
       }
