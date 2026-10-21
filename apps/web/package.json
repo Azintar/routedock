@@ -20,7 +20,7 @@
     "autoprefixer": "^10.4.27",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "framer-motion": "^12.38.0",
+    "framer-motion": "^14.3.0",
     "geist": "^1.7.0",
     "lucide-react": "^1.7.0",
     "next": "16.4.2",
