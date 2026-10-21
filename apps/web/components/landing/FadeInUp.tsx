@@ -19,14 +19,28 @@ export function FadeInUp({ children, delay = 0, className }: FadeInUpProps) {
     if (!element || preference.matches || !('IntersectionObserver' in window) || !element.animate || element.getBoundingClientRect().top < window.innerHeight) return
 
     let animation: Animation | undefined
+    function clearStyles() {
+      element!.style.removeProperty('opacity')
+      element!.style.removeProperty('transform')
+    }
+    // Only hydrated, below-the-fold content is hidden while awaiting intersection.
+    element.style.opacity = '0'
+    element.style.transform = 'translateY(24px)'
     const observer = new IntersectionObserver(([entry]) => {
       if (!entry?.isIntersecting) return
       observer.disconnect()
-      if (preference.matches) return
+      if (preference.matches) {
+        clearStyles()
+        return
+      }
       animation = element.animate(
         [{ opacity: 0, transform: 'translateY(24px)' }, { opacity: 1, transform: 'translateY(0)' }],
-        { duration: 450, delay: delay * 1000, easing: `cubic-bezier(${EASE_CUBIC.join(',')})`, fill: 'backwards' },
+        { duration: 450, delay: delay * 1000, easing: `cubic-bezier(${EASE_CUBIC.join(',')})`, fill: 'both' },
       )
+      animation.onfinish = () => {
+        clearStyles()
+        animation?.cancel()
+      }
     }, { rootMargin: '-60px' })
     observer.observe(element)
 
@@ -34,12 +48,14 @@ export function FadeInUp({ children, delay = 0, className }: FadeInUpProps) {
       if (preference.matches) {
         observer.disconnect()
         animation?.cancel()
+        clearStyles()
       }
     }
     preference.addEventListener('change', onPreferenceChange)
     return () => {
       observer.disconnect()
       animation?.cancel()
+      clearStyles()
       preference.removeEventListener('change', onPreferenceChange)
     }
   }, [delay])
