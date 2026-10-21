@@ -20,7 +20,7 @@ export function FadeInUp({ children, delay = 0, className }: FadeInUpProps) {
     if (preference.matches || !('IntersectionObserver' in window) || !element.animate || element.getBoundingClientRect().top < window.innerHeight) return
 
     let animation: Animation | undefined
-    function clearStyles() {
+    const clearStyles = () => {
       element.style.removeProperty('opacity')
       element.style.removeProperty('transform')
     }
