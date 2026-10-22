@@ -52,6 +52,17 @@ cargo +1.94.1 test --manifest-path contracts/agent-vault/Cargo.toml
 cargo +1.94.1 test --manifest-path contracts/agent-vault/Cargo.toml --features testutils
 ```
 
+**Snapshot rule:** `cargo test` writes `contracts/agent-vault/test_snapshots/tests/*.json`, which are
+committed to the repo and checked in CI. The test key generator is seeded deterministically, so a
+re-run produces byte-identical snapshots. CI deletes `contracts/agent-vault/test_snapshots` before
+the first test run, so a committed snapshot that no test regenerates fails the check as a deletion.
+If CI fails with “test_snapshots drifted”:
+
+1. Re-run `cargo +1.94.1 test --manifest-path contracts/agent-vault/Cargo.toml`.
+2. Commit the changed, added, or deleted snapshot files together with your contract change.
+
+Never hand-edit a snapshot.
+
 The three real Wasm upgrade tests are explicitly marked `ignored` in a native-only
 run, with a message explaining the required build. To run **all** tests, including
 the old immediate-upgrade bootstrap and current-to-current state-retention paths:
