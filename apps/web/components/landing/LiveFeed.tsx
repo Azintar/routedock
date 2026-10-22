@@ -11,12 +11,8 @@ function isPaymentMode(mode: string | null): mode is 'x402' | 'mpp-charge' | 'mp
   return mode === 'x402' || mode === 'mpp-charge' || mode === 'mpp-session'
 }
 
-interface LiveFeedProps {
-  initialEntries?: TxLogEntry[]
-}
-
-export function LiveFeed({ initialEntries = [] }: LiveFeedProps) {
-  const [entries, setEntries] = useState<TxLogEntry[]>(initialEntries)
+export function LiveFeed() {
+  const [entries, setEntries] = useState<TxLogEntry[]>([])
   const [feedFailed, setFeedFailed] = useState(false)
 
   useEffect(() => {
