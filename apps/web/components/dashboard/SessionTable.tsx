@@ -9,12 +9,13 @@ import { TxHashLink } from '@/components/shared/TxHashLink'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
-type StatusVariant = 'success' | 'warning' | 'neutral'
+type StatusVariant = 'success' | 'warning' | 'neutral' | 'error'
 
 const STATUS_VARIANT: Record<Session['status'], StatusVariant> = {
   open: 'success',
   closing: 'warning',
   closed: 'neutral',
+  failed: 'error',
 }
 
 interface SessionTableProps {

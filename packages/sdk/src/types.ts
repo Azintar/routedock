@@ -449,7 +449,7 @@ export interface SessionState {
   /** Monotonically increasing cumulative amount — stored as string to preserve precision */
   cumulative_amount: string
   last_signature: string
-  status: 'open' | 'closing' | 'closed'
+  status: 'open' | 'closing' | 'closed' | 'failed'
   opened_at: string
   updated_at: string
   settlement_tx_hash: string | null
