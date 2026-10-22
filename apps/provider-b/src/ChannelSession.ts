@@ -36,33 +36,29 @@ interface OrderBookResponse {
  * The mpp-session provider, hosted inside a single Durable Object.
  *
  * This is not an optimisation, it is a correctness requirement. The SDK's
- * mpp-session middleware tracks the highest voucher — its cumulative amount,
+ * session middleware tracks the highest voucher — its cumulative amount,
  * signature, payer, voucher count and opened flag — in handler state, and the
- * middleware's channel store is whatever the host injects. On Railway one
- * process served an entire session, so in-memory handler state was sound; on
- * plain Workers voucher N and voucher N+1 routinely land in different
- * isolates, and a fresh isolate with no durable state would let the DELETE
- * close path fall back to trusting the client-supplied amount and signature.
- * That is the exact protection the SDK added, defeated by the runtime.
+ * mppx channel store it builds is whatever the host injects. That was sound on
+ * Railway, where one process served an entire session.
+ *
+ * On plain Workers it is not: MppSessionClient issues one HTTP request per
+ * voucher, so voucher N and voucher N+1 routinely land in different isolates.
+ * A fresh isolate starts with no tracked voucher, and the DELETE close path
+ * then falls back to trusting the client-supplied amount and signature instead
+ * of the provider's own tracked values. That is the exact protection the SDK
+ * added, defeated by the runtime.
  *
  * A Durable Object restores the single-process assumption the SDK is written
- * against: one instance per channel contract, serialized execution, and
- * memory that persists between requests.
- *
- * Durable across eviction: the SDK receives a store backed by this object's
- * persistent storage, and routedockHono persists its session record (highest
- * verified voucher, its signature, payer, voucher count and opened flag) into
- * that same store on every voucher, reloading it when this object starts
- * fresh. The DELETE close path also floors at mppx's cumulative entry in the
- * store, so a close can never broadcast below the highest stored voucher even
- * when no record exists (sessions open across an SDK upgrade, or a failed
- * record write).
  * against: one instance per channel contract, serialized execution, and memory
  * that persists between requests.
  *
  * The SDK receives a store backed by this object's persistent storage, so mppx
  * channel state, verified voucher records (amount, signature, payer), and
  * session bookkeeping (voucherCount, sessionOpened) survive isolate eviction.
+ * The DELETE close path also floors at mppx's cumulative entry in that store,
+ * so a close can never broadcast below the highest stored voucher even when no
+ * routedock record exists (a session opened across an SDK upgrade, or a failed
+ * record write).
  *
  * Transient in-memory state: in-flight request abort guards and idle timers are
  * scoped to active requests and recreated or rearmed as new requests arrive.
@@ -147,16 +143,6 @@ export class ChannelSession extends DurableObject<Env> {
         commitmentPublicKey,
         sessionStore,
         manifest,
-        // Keep background vault settlement (and any other SDK background
-        // promise) alive past the close response instead of risking the
-        // isolate being evicted before it runs.
-        waitUntil: (promise) => this.ctx.waitUntil(promise),
-        // Record session_settled on the agent vault after a clean close.
-        // Configured per handler (issue #555): the SDK reads no env vars, so
-        // the var name here is the one the docs use — AGENT_VAULT_CONTRACT_ID.
-        ...(env.AGENT_VAULT_CONTRACT_ID
-          ? { vaultSettlement: { contract: env.AGENT_VAULT_CONTRACT_ID } }
-          : {}),
         // Optional: record session_settled on the agent vault after each
         // clean close so the vault's audit trail shows the session.
         ...(env.AGENT_VAULT_CONTRACT_ID

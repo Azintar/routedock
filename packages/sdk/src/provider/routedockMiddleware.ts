@@ -7,7 +7,6 @@ import { signManifest } from '../manifest/sign.js'
 import type { SeenTxStore } from './SeenTxStore.js'
 import type { OrphanedSessionInfo } from './MppSessionHandler.js'
 import type { RouteDockLogger } from '../internal/logger.js'
-import type { VaultSettlementOptions } from './internal/vaultSettlement.js'
 import type { VaultSettlementConfig } from '../internal/vaultConfig.js'
 
 export interface RouteDockMiddlewareOptions {
@@ -64,12 +63,6 @@ export interface RouteDockMiddlewareOptions {
    */
   logger?: RouteDockLogger
   /**
-   * Agent vault configuration for recording `session_settled` after a clean
-   * mpp-session close. Failures are logged and reported through
-   * onCallbackError, never thrown into the close response. Replaces the SDK's
-   * former process-wide AGENT_VAULT_CONTRACT env lookup.
-   */
-  vaultSettlement?: VaultSettlementOptions
    * Record `session_settled` on the agent vault after each clean mpp-session
    * close. Falls back to the deprecated `AGENT_VAULT_CONTRACT`/
    * `AGENT_VAULT_CONTRACT_ID` env vars when unset.

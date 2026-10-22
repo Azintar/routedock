@@ -4,12 +4,6 @@ import { stellar, close as channelClose, Store } from '@stellar/mpp/channel/serv
 import { Mppx, Request as MppxRequest } from 'mppx/server'
 import { Store as MppxStore } from 'mppx'
 import type { RouteDockManifest } from '../types.js'
-import {
-  recordSessionSettlement,
-  resolveVaultSettlementAddresses,
-  settlementOutcomeError,
-  type VaultSettlementOptions,
-} from './internal/vaultSettlement.js'
 import { recordSessionSettlement } from './internal/vaultSettlement.js'
 import {
   resolveVaultSettlementConfig,
@@ -31,20 +25,10 @@ export type ChannelStore = MppxStore.Store & {
   update?: (key: string, fn: (prev: unknown) => unknown) => Promise<unknown>
 }
 
-/** Expected payload shape for voucher cumulative amount entries. */
-export interface VoucherStoreValue {
-  amount: string
-  [key: string]: unknown
-}
-
-/** Validates that a stored store value is an object containing a numeric string amount. */
-export function isVoucherStoreValue(value: unknown): value is VoucherStoreValue {
-  if (typeof value !== 'object' || value === null) {
-    return false
-  }
-  const candidate = value as Record<string, unknown>
-  return typeof candidate.amount === 'string' && /^\d+$/.test(candidate.amount)
-}
+// The cumulative-voucher guard lives in its own dependency-free module so
+// `hono.ts` can use it without loading this module's runtime imports; it is
+// re-exported here because that is where consumers have always imported it.
+export { isVoucherStoreValue, type VoucherStoreValue } from './voucherStoreValue.js'
 
 /** The last verified voucher: amount, its signature, and the payer it named. */
 interface VerifiedVoucherRecord {
@@ -101,14 +85,6 @@ export interface MppSessionHandlerOptions {
   /** Log sink for internal error paths. Defaults to a console-backed logger. */
   logger?: RouteDockLogger
   /**
-   * Agent vault configuration for recording `session_settled` after a clean
-   * close. When set, the SDK builds, signs, sends and confirms the vault
-   * transaction via the shared recordSessionSettlement helper (failures are
-   * logged and reported through onCallbackError, never thrown into the close
-   * response). Replaces the SDK's former process-wide AGENT_VAULT_CONTRACT
-   * env lookup.
-   */
-  vaultSettlement?: VaultSettlementOptions
    * Record `session_settled` on the agent vault after each clean close.
    * `contract` is the vault's C... id; `rpcUrl` overrides the default Soroban
    * RPC endpoint for the configured network. Falls back to the deprecated
@@ -350,34 +326,6 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
             })
           }
 
-          // Optionally record session_settled on the agent vault.
-          // The vault authorizes this call with the allowlisted payee's own key,
-          // so the payee is the transaction source and signs it. Configured
-          // per handler via the vaultSettlement option — the SDK reads no
-          // env vars, and the vault admin secret is never read, so a provider
-          // never holds the key that guards upgrade().
-          if (opts.vaultSettlement) {
-            const settlementAddresses = resolveVaultSettlementAddresses(
-              closePayer,
-              payeeKeypair.publicKey(),
-            )
-            if (!settlementAddresses) {
-              logger('warn', '[mpp-session] skipped session_settled vault record: payer address unavailable')
-            } else {
-              const outcome = await recordSessionSettlement({
-                options: opts.vaultSettlement,
-                channelId: opts.channelFactory,
-                addresses: settlementAddresses,
-                amount: closeAmount,
-                voucherCount,
-                network: opts.network,
-                sourceKeypair: payeeKeypair,
-                logger,
-              })
-              if (outcome.status !== 'confirmed') {
-                opts.onCallbackError?.(settlementOutcomeError(outcome), 'sessionSettlement')
-              }
-            }
           // Respond before the vault record so confirmation polling can never
           // delay the close response.
           res.json({ closeTxHash })

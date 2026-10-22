@@ -14,6 +14,4 @@ export interface Env {
   SUPABASE_SERVICE_KEY?: string
   /** Public origin recorded on settlement, e.g. https://api-b.routedock.xyz */
   PUBLIC_BASE_URL?: string
-  /** Optional: agent-vault contract (C...) to record session_settled on after a clean close. */
-  AGENT_VAULT_CONTRACT_ID?: string
 }
