@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Geist, Geist_Mono, IBM_Plex_Mono } from 'next/font/google'
 import { ThemeProvider } from 'next-themes'
 import { metadataBase } from '@/lib/metadata'
+import { MotionProvider } from '@/components/layout/MotionProvider'
 import './globals.css'
 
 const geistSans = Geist({
@@ -62,7 +63,7 @@ export default function RootLayout({
           storageKey="routedock-theme"
           enableSystem={false}
         >
-          {children}
+          <MotionProvider>{children}</MotionProvider>
         </ThemeProvider>
       </body>
     </html>
