@@ -903,7 +903,7 @@ function isWebSocketUpgradeRequest(c: {
  *
  * @example
  * ```ts
- * import { routedockHono } from '@routedock/sdk/provider/hono'
+ * import { routedockHono } from '@routedock/routedock/provider/hono'
  *
  * app.use('/price', routedockHono({
  *   modes: ['x402', 'mpp-charge'],
