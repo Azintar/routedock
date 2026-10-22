@@ -52,10 +52,16 @@ function serveManifest(manifest: unknown) {
 function makeClient(): RouteDockClient {
   const client = new RouteDockClient({ wallet: Keypair.random(), network: 'testnet' })
   const fail = (what: string) => async () => { assert.fail(`${what} must NOT be called by preflight(url)`) }
-  ;(client as any).x402.pay = fail('x402.pay')
-  ;(client as any).charge.pay = fail('charge.pay')
-  ;(client as any).session.open = fail('session.open')
-  ;(client as any)._checkTrustline = fail('_checkTrustline')
+  const internals = client as unknown as {
+    x402: { pay: unknown }
+    charge: { pay: unknown }
+    session: { openSession: unknown }
+    _checkTrustline: unknown
+  }
+  internals.x402.pay = fail('x402.pay')
+  internals.charge.pay = fail('charge.pay')
+  internals.session.openSession = fail('session.openSession')
+  internals._checkTrustline = fail('_checkTrustline')
   return client
 }
 
@@ -103,7 +109,7 @@ const BASE_MANIFEST = signManifest({
 {
   const sessionPricing = {
     rate: '0.0001',
-    per: 'voucher',
+    per: 'voucher' as const,
     channel_factory: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
     min_deposit: '0.10',
     refund_waiting_period_ledgers: 17280,
@@ -111,8 +117,8 @@ const BASE_MANIFEST = signManifest({
   const manifest = signManifest({
     ...BASE_MANIFEST,
     modes: ['x402', 'mpp-session'],
-    pricing: { x402: BASE_MANIFEST.pricing.x402, 'mpp-session': sessionPricing },
-  } as any, PAYEE_KEYPAIR.secret())
+    pricing: { x402: BASE_MANIFEST.pricing.x402!, 'mpp-session': sessionPricing },
+  }, PAYEE_KEYPAIR.secret())
 
   const server = await serveManifest(manifest)
   try {
@@ -142,7 +148,7 @@ const BASE_MANIFEST = signManifest({
     deprecated_modes: ['x402'],
     sunset_at: manifestSunset,
     endpoints: { price: { method: 'GET', path: '/price', deprecated: true, sunset_at: endpointSunset } },
-  } as any, PAYEE_KEYPAIR.secret())
+  }, PAYEE_KEYPAIR.secret())
 
   const server = await serveManifest(manifest)
   try {
@@ -203,7 +209,7 @@ const BASE_MANIFEST = signManifest({
   const manifest = signManifest({
     ...BASE_MANIFEST,
     endpoints: { price: { method: 'GET', path: '/price', sunset_at: new Date(Date.now() - 86_400_000).toISOString() } },
-  } as any, PAYEE_KEYPAIR.secret())
+  }, PAYEE_KEYPAIR.secret())
 
   const server = await serveManifest(manifest)
   try {
