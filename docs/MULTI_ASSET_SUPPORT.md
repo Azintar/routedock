@@ -162,10 +162,23 @@ In all adapters, `asset` and `assetContract` middleware options are optional whe
 
 - **`client.preflight(manifest, mode?, endpoint?)`**:
   Selects the eligible asset for `mode` and `endpoint` and runs the trustline preflight against that asset. Native assets like `XLM` are verified against the account's native balance. If no asset is eligible for the specified mode/endpoint, `preflight()` throws a `RouteDockManifestError` rather than silently falling back to the root asset.
+- **`client.preflight(url)`**:
+  Fetches and validates the provider manifest, then returns the supported `modes`, an estimated `costs` entry per mode (amount, billing unit, selected asset, and `min_deposit` for session modes), and `compliance` flags (`deprecated_modes`, manifest `sunset_at`, and `endpoint_deprecated` / `endpoint_sunset_at` for the URL path). It moves no money and does not check the payer's trustline. Throws the same manifest errors as `pay()` and `estimateCost()` for unreachable, invalid, or sunset manifests and endpoints.
 - **`client.pay(url, options?)`**:
   Resolves mode and endpoint, selects the eligible asset via `selectAsset(manifest, mode, url)`, verifies the trustline, and executes payment. Throws `RouteDockManifestError` if no eligible asset is configured.
 - **`client.estimateCost(url, options?)`**:
   Returns `asset` matching the selected eligible asset for the chosen payment mode and endpoint, failing closed if none match.
+
+### Spend caps and non-USDC assets
+
+`spendCap` (`daily` and `endpointCaps`) is a single USDC accumulator, and `spendCap.asset` can only be `'USDC'`. The client never converts between assets, so it does not guess what 5 XLM is worth:
+
+- If a cap is configured and the asset selected for the payment (`selectAsset(manifest, mode, url)`) is not `spendCap.asset`, `pay()` and `openSession()` throw `RouteDockPolicyRejectError` with reason `local_cap_asset_mismatch`.
+- The check runs before the trustline preflight and before a session channel is opened, so nothing is spent, deposited or recorded.
+- Nothing in another asset is ever added to the USDC total.
+- Manifests that only price in USDC, and clients with no `spendCap`, behave exactly as before.
+
+To pay a provider that prices in XLM or another asset, construct the client without `spendCap` and enforce limits in your own policy layer.
 
 ---
 

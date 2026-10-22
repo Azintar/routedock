@@ -1,10 +1,10 @@
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
 import { fetchManifest, selectMode, invalidateManifest as evictManifest, assertManifestValid, assertEndpointActive, type ModeSelectOptions, type RouteDockLogger } from './ModeRouter.js'
-import { X402Client } from './x402Client.js'
+import { X402Client, type X402PreSignHook } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
 import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
-import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult } from '../types.js'
+import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult, UrlPreflightResult, PreflightModeCost } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
 import { USDC_ISSUERS, usdcToStroops } from '../internal/usdc.js'
@@ -18,8 +18,20 @@ import { selectAsset } from '../internal/assetUtils.js'
 const _secrets = new WeakMap<RouteDockClient, string>()
 
 export interface SpendCap {
-  /** Maximum total USDC spend per day (decimal string, e.g. "1.00") */
+  /**
+   * Maximum total spend per day (decimal string, e.g. "1.00"), denominated in
+   * `asset`.
+   *
+   * The accumulator is a single USDC number, so the cap only ever counts USDC.
+   * When a cap is configured, a payment whose selected asset (see
+   * `selectAsset`) is anything other than `asset` is rejected before any
+   * trustline check, network call or on-chain deposit with
+   * `RouteDockPolicyRejectError('local_cap_asset_mismatch')`. Amounts in other
+   * assets are never added to the USDC total, since 5 XLM is not 5 USDC.
+   * Manifests that only price in USDC behave exactly as before.
+   */
   daily: string
+  /** The only asset this cap can account for. */
   asset: 'USDC'
   /**
    * Optional per-endpoint daily spend caps, keyed by endpoint origin URL
@@ -102,6 +114,11 @@ export interface RouteDockClientConfig {
   commitmentSecret?: string | undefined
   /** Retry policy for transient failures (network, facilitator 5xx). */
   retryPolicy?: RetryPolicy
+  /**
+   * Optional guard run before an x402 payment is signed. Rejecting or throwing
+   * aborts the payment with `RouteDockPolicyRejectError`. x402 mode only.
+   */
+  preSignHook?: X402PreSignHook
   /**
    * Durable backing store for the daily spend cap accumulator. Defaults to a
    * non-durable in-memory store that resets on restart (with a startup warning).
@@ -229,7 +246,7 @@ export class RouteDockClient {
     // Carry the client's logger into retry diagnostics so a consumer that
     // silences the SDK silences the retry path too.
     const retryPolicy = this.logger ? { ...this.retryPolicy, logger: this.logger } : this.retryPolicy
-    this.x402 = new X402Client(secretKey, this.network, retryPolicy)
+    this.x402 = new X402Client(secretKey, this.network, retryPolicy, config.preSignHook)
     this.charge = new MppChargeClient(this.keypair, this.network, retryPolicy)
     this.session = new MppSessionClient(this.keypair, this.network, retryPolicy, undefined, this.logger)
   }
@@ -259,16 +276,33 @@ export class RouteDockClient {
   }
 
   /**
-   * Check that the payer has a trustline for the payment asset and surface
-   * manifest metadata (regions, latency hints, capabilities). Safe to
-   * call before committing to a payment — for approval gates and manual
-   * trustline remediation.
+   * Check a provider before committing to a payment. Neither form submits a
+   * transaction or moves money.
+   *
+   * - `preflight(url)` fetches and validates the provider's manifest and
+   *   returns the supported modes, the estimated cost per mode, and
+   *   deprecation/sunset flags. It does not check the payer's trustline.
+   *   Throws the same manifest errors as `pay()` / `estimateCost()` when the
+   *   manifest is unreachable, invalid, unsupported by this SDK version, or
+   *   sunset (including a sunset endpoint matching the URL path).
+   * - `preflight(manifest, mode?, endpoint?)` checks that the payer has a
+   *   trustline for the payment asset and surfaces manifest metadata
+   *   (regions, latency hints, capabilities). For approval gates and manual
+   *   trustline remediation.
    */
-  async preflight(
+  preflight(url: string): Promise<UrlPreflightResult>
+  preflight(
     manifest: RouteDockManifest,
     mode?: PaymentMode,
     endpoint?: string,
-  ): Promise<PreflightResult> {
+  ): Promise<PreflightResult>
+  async preflight(
+    target: string | RouteDockManifest,
+    mode?: PaymentMode,
+    endpoint?: string,
+  ): Promise<PreflightResult | UrlPreflightResult> {
+    if (typeof target === 'string') return this._preflightUrl(target)
+    const manifest = target
     assertManifestValid(manifest)
     const selectedAsset = mode
       ? selectAsset(manifest, mode, endpoint).asset
@@ -281,6 +315,49 @@ export class RouteDockClient {
       ...(manifest.regions && { regions: manifest.regions }),
       ...(manifest.latency_hints && { latency_hints: manifest.latency_hints }),
       ...(manifest.capabilities && { capabilities: manifest.capabilities }),
+    }
+  }
+
+  /** Manifest-only preflight for a URL — no trustline check, no payment. */
+  private async _preflightUrl(url: string): Promise<UrlPreflightResult> {
+    const baseUrl = new URL(url).origin
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    assertEndpointActive(manifest, url)
+
+    const costs: PreflightModeCost[] = manifest.modes.map((mode) => {
+      const asset = selectAsset(manifest, mode, url).asset
+      switch (mode) {
+        case 'x402':
+        case 'mpp-charge': {
+          const pricing = manifest.pricing[mode]!
+          return { mode, amount: pricing.amount, per: 'request', asset }
+        }
+        case 'mpp-session':
+        case 'mpp-session-ws': {
+          const pricing = manifest.pricing[mode]!
+          return { mode, amount: pricing.rate, per: 'voucher', asset, min_deposit: pricing.min_deposit }
+        }
+        default:
+          throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
+      }
+    })
+
+    const pathname = new URL(url).pathname
+    const matches = Object.values(manifest.endpoints).filter((descriptor) => descriptor.path === pathname)
+    const endpointSunsets = matches
+      .map((descriptor) => descriptor.sunset_at)
+      .filter((value): value is string => typeof value === 'string')
+      .sort((a, b) => Date.parse(a) - Date.parse(b))
+
+    return {
+      modes: manifest.modes,
+      costs,
+      compliance: {
+        deprecated_modes: manifest.deprecated_modes ?? [],
+        ...(manifest.sunset_at && { sunset_at: manifest.sunset_at }),
+        endpoint_deprecated: matches.some((descriptor) => descriptor.deprecated === true),
+        ...(endpointSunsets[0] && { endpoint_sunset_at: endpointSunsets[0] }),
+      },
     }
   }
 
@@ -354,6 +431,9 @@ export class RouteDockClient {
 
     const selectedAsset = selectAsset(manifest, mode, url).asset
 
+    // Fail closed before any network call if the cap can't account for this asset.
+    this._assertCapAsset(selectedAsset)
+
     await this._checkTrustline(manifest, selectedAsset)
 
     let amount: string
@@ -374,7 +454,7 @@ export class RouteDockClient {
     }
 
     // Reserve before dispatching so no path can spend outside the cap.
-    const reserveId = await this._checkAndReserveSpend(amount, baseUrl)
+    const reserveId = await this._checkAndReserveSpend(amount, baseUrl, selectedAsset)
 
     let result: PaymentResult
     try {
@@ -510,11 +590,31 @@ export class RouteDockClient {
     }
 
     const endpointKey = new URL(url).origin
-    const onSpend = this.spendCap
-      ? (amount: string) => this._recordSessionSpend(amount, endpointKey)
-      : undefined
+
+    // Reject before the channel opens (opening deposits on-chain), so a
+    // non-capped asset never gets as far as locking funds.
+    let onSpend: ((amount: string) => Promise<void>) | undefined
+    if (this.spendCap) {
+      const sessionAsset = selectAsset(manifest, mode, url).asset
+      this._assertCapAsset(sessionAsset)
+      onSpend = (amount: string) => this._recordSessionSpend(amount, endpointKey, sessionAsset)
+    }
 
     return this.session.openSession(url, manifest, secret, options, onSpend)
+  }
+
+  /**
+   * The local cap accumulates one USDC total. Refuse to count any other asset
+   * against it (or let it through uncounted) when a cap is configured.
+   */
+  private _assertCapAsset(asset: string): void {
+    if (this.spendCap && asset !== this.spendCap.asset) {
+      throw new RouteDockPolicyRejectError('local_cap_asset_mismatch', {
+        cause: new Error(
+          `spendCap is denominated in ${this.spendCap.asset} but the selected payment asset is ${asset}`,
+        ),
+      })
+    }
   }
 
   /**
@@ -523,8 +623,8 @@ export class RouteDockClient {
    * as discrete pay() calls. Returns a commit function to clean up the
    * reservation after the voucher fetch succeeds.
    */
-  private async _recordSessionSpend(amount: string, endpointKey: string): Promise<void> {
-    const reserveId = await this._checkAndReserveSpend(amount, endpointKey)
+  private async _recordSessionSpend(amount: string, endpointKey: string, asset: string): Promise<void> {
+    const reserveId = await this._checkAndReserveSpend(amount, endpointKey, asset)
     if (reserveId) {
       // For sessions, commit immediately — the spend is final once the
       // voucher is issued. No rollback path on voucher fetch failure since
@@ -569,8 +669,9 @@ export class RouteDockClient {
    * Both limits are independent: a payment is only reserved after **both** pass.
    * All spend (regardless of endpoint) counts toward the global accumulator.
    */
-  private async _checkAndReserveSpend(amount: string, endpointKey: string): Promise<string> {
+  private async _checkAndReserveSpend(amount: string, endpointKey: string, asset: string): Promise<string> {
     if (!this.spendCap) return ''
+    this._assertCapAsset(asset)
 
     return this._withSpendMutex(async () => {
       const today = new Date().toISOString().slice(0, 10)

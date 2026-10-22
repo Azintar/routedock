@@ -57,6 +57,15 @@ interface OrderBookResponse {
  * store, so a close can never broadcast below the highest stored voucher even
  * when no record exists (sessions open across an SDK upgrade, or a failed
  * record write).
+ * against: one instance per channel contract, serialized execution, and memory
+ * that persists between requests.
+ *
+ * The SDK receives a store backed by this object's persistent storage, so mppx
+ * channel state, verified voucher records (amount, signature, payer), and
+ * session bookkeeping (voucherCount, sessionOpened) survive isolate eviction.
+ *
+ * Transient in-memory state: in-flight request abort guards and idle timers are
+ * scoped to active requests and recreated or rearmed as new requests arrive.
  */
 export class ChannelSession extends DurableObject<Env> {
   private app: Hono | null = null
@@ -115,6 +124,13 @@ export class ChannelSession extends DurableObject<Env> {
 
     const app = new Hono()
 
+    // Vault settlement must outlive the DELETE request (it polls for tx
+    // confirmation), so hand the promise to the Durable Object's waitUntil.
+    // The unit-test harness constructs this class without a ctx, hence the guard.
+    const waitUntil = this.ctx
+      ? (promise: Promise<unknown>): void => { this.ctx.waitUntil(promise) }
+      : undefined
+
     app.use(
       '*',
       routedockHono({
@@ -141,6 +157,12 @@ export class ChannelSession extends DurableObject<Env> {
         ...(env.AGENT_VAULT_CONTRACT_ID
           ? { vaultSettlement: { contract: env.AGENT_VAULT_CONTRACT_ID } }
           : {}),
+        // Optional: record session_settled on the agent vault after each
+        // clean close so the vault's audit trail shows the session.
+        ...(env.AGENT_VAULT_CONTRACT_ID
+          ? { vaultSettlement: { contract: env.AGENT_VAULT_CONTRACT_ID } }
+          : {}),
+        ...(waitUntil ? { waitUntil } : {}),
         ...sessionWriters,
       }),
     )

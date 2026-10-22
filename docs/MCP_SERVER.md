@@ -55,7 +55,13 @@ Open a sustained MPP session for streaming data. Uses off-chain vouchers for low
 
 **Use case:** Streaming orderbooks, real-time data feeds, sustained access
 
-**Returns:** `channel_id` and open transaction hash — pass `channel_id` to `stream_session` and `close_session`
+`url` is the provider's streaming endpoint, e.g. `https://api-b.routedock.xyz/stream/orderbook`. Vouchers
+and the closing `DELETE` go to this exact URL. A bare origin (`https://api-b.routedock.xyz`) is resolved
+from the provider's `/.well-known/routedock.json`: `endpoints.stream` is used, or the only endpoint if
+there is just one. It must be `GET` and on the same origin; otherwise the call fails without opening a
+session and lists the manifest's endpoints.
+
+**Returns:** `channel_id`, open transaction hash and `endpoint_url` — pass `channel_id` to `stream_session` and `close_session`
 
 ### 3. stream_session(channel_id, max_messages)
 
@@ -115,6 +121,7 @@ Add to `claude_desktop_config.json`:
       "env": {
         "STELLAR_SECRET": "S...",
         "STELLAR_NETWORK": "testnet",
+        "ROUTEDOCK_DAILY_CAP": "10",
         "COMMITMENT_SECRET": "S...",
         "SUPABASE_URL": "https://...",
         "SUPABASE_KEY": "..."
@@ -131,7 +138,7 @@ Once configured, ask Claude:
 > "Check my Stellar balance"
 > "List providers that offer price data"
 > "Pay for data from https://api-a.routedock.xyz/price with a max of 0.01 USDC"
-> "Open a session with https://api-b.routedock.xyz for streaming orderbook data"
+> "Open a session with https://api-b.routedock.xyz/stream/orderbook for streaming orderbook data"
 
 ## Implementation Details
 
@@ -154,11 +161,18 @@ All tools return structured error responses:
 
 ### Environment Variables
 
-- `STELLAR_SECRET`: Required - Wallet secret key
-- `STELLAR_NETWORK`: Required - "testnet" or "mainnet"
-- `COMMITMENT_SECRET`: Optional - For session mode
-- `SUPABASE_URL`: Optional - For provider registry
-- `SUPABASE_KEY`: Optional - For provider registry
+- `STELLAR_SECRET`: Required - Wallet secret key (can also be provided via `ROUTEDOCK_WALLET_SECRET`).
+- `STELLAR_NETWORK`: Optional - Stellar network to use. Allowed values:
+  - `"testnet"` (default)
+  - `"mainnet"`
+  - `"pubnet"` or `"public"` (accepted as aliases for `"mainnet"` with a warning)
+  Any other value will cause the server to exit immediately with an error naming the allowed values.
+- `ROUTEDOCK_DAILY_CAP`: Required - Maximum daily spend in USDC to prevent unbounded spending (e.g. `"10"`).
+- `COMMITMENT_SECRET`: Optional - Wallet secret for opening payment channels in session mode.
+- `SUPABASE_URL`: Optional - Supabase project URL for the provider registry.
+- `SUPABASE_KEY`: Optional - Supabase anon key for the provider registry (use anon key, not service-role key).
+- `ROUTEDOCK_SPEND_STORE_PATH`: Optional - Custom path for the spend tracking file (defaults to `~/.routedock/spend.json`).
+- `ROUTEDOCK_ENV_FILE`: Optional - Path to an external `.env` file to load secrets from.
 
 ### Security
 

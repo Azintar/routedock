@@ -36,6 +36,7 @@ import {
   InMemorySeenTxStore,
   paymentIdempotencyKey,
   checkSettlementReplay,
+  recordSettlement,
   type SeenTxStore,
 } from './SeenTxStore.js'
 import { resolveAssetContract } from '../internal/assetUtils.js'
@@ -47,6 +48,11 @@ import {
   settlementOutcomeError,
   type VaultSettlementOptions,
 } from './internal/vaultSettlement.js'
+import { recordSessionSettlement } from './internal/vaultSettlement.js'
+import {
+  resolveVaultSettlementConfig,
+  type VaultSettlementConfig,
+} from '../internal/vaultConfig.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -95,7 +101,7 @@ export interface RouteDockHonoOptions {
    * Defaults to an in-memory store per handler; supply a durable store (e.g.
    * Durable Object storage) so voucher tracking survives isolate eviction.
    */
-  sessionStore?: Store.Store
+  sessionStore?: Store.Store | undefined
   /** Log sink for internal error paths. Defaults to a console-backed logger. */
   logger?: RouteDockLogger
   /**
@@ -111,6 +117,17 @@ export interface RouteDockHonoOptions {
    * Host waitUntil callback (e.g. Cloudflare `ctx.waitUntil`) used to keep
    * background work (the vault settlement) alive past the close response.
    * Omit to use a plain background promise.
+   * Record `session_settled` on the agent vault after each clean mpp-session
+   * close. `contract` is the vault's C... id; `rpcUrl` overrides the default
+   * Soroban RPC endpoint for the configured network. The vault authorizes
+   * the record with the payee's own key, so no admin secret is ever held.
+   */
+  vaultSettlement?: VaultSettlementConfig
+  /**
+   * Receives background promises (currently the vault settlement record) so
+   * the runtime keeps the request alive until they finish — pass
+   * `ctx.waitUntil` on Cloudflare Workers. Without it, settlement still runs
+   * but the runtime may evict the isolate before it completes.
    */
   waitUntil?: (promise: Promise<unknown>) => void
 }
@@ -264,12 +281,11 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
           requirements,
         )
         if (!verifyResult.isValid) {
-          return c.json(
-            {
-              error: 'Payment verification failed',
-              reason: (verifyResult as { invalidReason?: string }).invalidReason,
-            },
-            401,
+          // Same shape as a settlement failure: 402 + fresh requirements + reason,
+          // so a protocol-following client can retry or report why it was refused.
+          return respondPaymentRequired(
+            'Payment verification failed',
+            (verifyResult as { invalidReason?: string }).invalidReason,
           )
         }
         const settleResult = await localFacilitator.settle(
@@ -291,7 +307,12 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
       if (idempotencyKey) {
         const headers: Record<string, string> = {}
         if (paymentResponseHeader) headers['X-Payment-Response'] = paymentResponseHeader
-        await seenTxStore.set(idempotencyKey, { txHash, headers, createdAt: Date.now() })
+        await recordSettlement(
+          seenTxStore,
+          idempotencyKey,
+          { txHash, headers, createdAt: Date.now() },
+          { logger, label: '[x402]', onCallbackError: opts.onCallbackError },
+        )
       }
 
       if (txHash && opts.onSettled) {
@@ -450,11 +471,12 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
 
       // Record the settlement so a retry of this exact charge is deduped.
       if (idempotencyKey) {
-        await seenTxStore.set(idempotencyKey, {
-          txHash: reference ?? null,
-          headers: receiptHeaders,
-          createdAt: Date.now(),
-        })
+        await recordSettlement(
+          seenTxStore,
+          idempotencyKey,
+          { txHash: reference ?? null, headers: receiptHeaders, createdAt: Date.now() },
+          { logger, label: '[mpp-charge]', onCallbackError: opts.onCallbackError },
+        )
       }
 
       if (reference && opts.onSettled) {
@@ -466,7 +488,11 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
 
       await next()
     } catch (err) {
-      throw err
+      if (err instanceof RouteDockManifestError) {
+        throw err
+      }
+      logger('error', '[mpp-charge] Settlement error', { error: err })
+      return c.json({ error: 'Payment settlement failed' }, 500)
     }
   }
 }
@@ -552,6 +578,7 @@ function createMppSessionHandlerState(
   let record: VerifiedVoucherRecord | null = null
   let voucherCount = 0
   let sessionOpened = false
+  let orphanFlagged = false
   let idleTimer: ReturnType<typeof setTimeout> | null = null
   let settledCleanly = false
   let abortListenerArmed = false
@@ -592,6 +619,7 @@ function createMppSessionHandlerState(
             payer?: string | null
             voucherCount?: number
             opened?: boolean
+            sessionOpened?: boolean
           }
         | undefined
       if (!stored || typeof stored.amount !== 'string' || typeof stored.signature !== 'string') {
@@ -609,6 +637,15 @@ function createMppSessionHandlerState(
       }
       voucherCount = record.voucherCount
       sessionOpened = record.opened
+      record = { amount: BigInt(stored.amount), signature: stored.signature, payer: stored.payer ?? null }
+      if (typeof stored.voucherCount === 'number') {
+        voucherCount = stored.voucherCount
+      }
+      if (typeof stored.sessionOpened === 'boolean') {
+        sessionOpened = stored.sessionOpened
+      } else if (record !== null) {
+        sessionOpened = true
+      }
     } catch {
       // Corrupt or unreadable persisted record — proceed as though there is none.
       return null
@@ -619,8 +656,8 @@ function createMppSessionHandlerState(
   // Flag an open-but-unsettled session for the reconciler. Idempotent.
   async function flagOrphan(reason: 'connection-closed' | 'idle-timeout'): Promise<void> {
     await loadPersistedRecord()
-    if (!sessionOpened || settledCleanly) return
-    sessionOpened = false
+    if (!sessionOpened || settledCleanly || orphanFlagged) return
+    orphanFlagged = true
     abortListenerArmed = false
     clearIdleTimer()
 
@@ -672,11 +709,13 @@ function createMppSessionHandlerState(
 
     const payer = record?.payer ?? extractPayerAddress(credential.source)
     record = { amount, signature: payload.signature, payer, voucherCount: 0, opened: false }
+    record = { amount, signature: payload.signature, payer }
 
     voucherCount++
     record.voucherCount = voucherCount
     // Voucher activity — this session is alive again.
     settledCleanly = false
+    orphanFlagged = false
     armIdleTimer()
 
     let fireSessionOpen = false
@@ -693,6 +732,9 @@ function createMppSessionHandlerState(
     // Persist BEFORE the (async) callbacks: the callbacks are fire-and-forget
     // promises, so a rebuilt instance must see the advanced record whether or
     // not they have run.
+    const wasOpened = sessionOpened
+    sessionOpened = true
+
     await innerStore.put(voucherRecordKey, {
       amount: record.amount.toString(),
       signature: record.signature,
@@ -702,6 +744,11 @@ function createMppSessionHandlerState(
     })
 
     if (fireSessionOpen) {
+      voucherCount,
+      sessionOpened: true,
+    })
+
+    if (!wasOpened) {
       if (opts.onSessionOpen) {
         Promise.resolve()
           .then(() => opts.onSessionOpen!(sessionPricing.channelFactory, record!.payer))
@@ -856,6 +903,36 @@ function createMppSessionHandlerState(
       await innerStore.delete(voucherRecordKey)
       await innerStore.delete(cumulativeKey)
       abortListenerArmed = false
+        // Record session_settled on the agent vault. Fire-and-forget: it must
+        // never delay or fail the close response — recordSessionSettlement
+        // never throws and reports failures itself. Started before the state
+        // reset below so the request captures this session's values, and
+        // handed to waitUntil when the caller provides one so the runtime
+        // keeps the isolate alive until the record lands.
+        const vaultConfig = resolveVaultSettlementConfig(opts.vaultSettlement, logger)
+        if (vaultConfig) {
+          const settlement = recordSessionSettlement(
+            {
+              config: vaultConfig,
+              network: opts.network,
+              payeeSecretKey: opts.payeeSecretKey,
+              channelId: sessionPricing.channelFactory,
+              payer: closePayer,
+              amount: closeAmount,
+              voucherCount,
+            },
+            { logger, onCallbackError: opts.onCallbackError },
+          )
+          if (opts.waitUntil) opts.waitUntil(settlement)
+          else void settlement
+        }
+
+        sessionOpened = false
+        voucherCount = 0
+        orphanFlagged = false
+        record = null
+        await innerStore.delete(voucherRecordKey)
+        abortListenerArmed = false
 
         return c.json({ closeTxHash })
       }
@@ -887,10 +964,12 @@ function createMppSessionHonoHandler(
   state: MppSessionHandlerState,
 ): MiddlewareHandler {
   const sessionPricing = opts.pricing[config.mode]!
+  const logger = resolveLogger(opts.logger)
   return async (c, next) => {
     try {
       if (c.req.method === 'DELETE') {
-        return state.handleDelete(c as unknown as DeleteContext)
+        // `await` so a rejected close is caught below rather than escaping.
+        return await state.handleDelete(c as unknown as DeleteContext)
       }
 
       const result = await (
@@ -928,7 +1007,11 @@ function createMppSessionHonoHandler(
 
       await next()
     } catch (err) {
-      throw err
+      if (err instanceof RouteDockManifestError) {
+        throw err
+      }
+      logger('error', `[${config.mode}] Session error`, { error: err })
+      return c.json({ error: 'Session payment failed' }, 500)
     }
   }
 }
@@ -954,7 +1037,7 @@ function isWebSocketUpgradeRequest(c: {
  *
  * @example
  * ```ts
- * import { routedockHono } from '@routedock/sdk/provider/hono'
+ * import { routedockHono } from '@routedock/routedock/provider/hono'
  *
  * app.use('/price', routedockHono({
  *   modes: ['x402', 'mpp-charge'],
@@ -1024,6 +1107,7 @@ export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
 
 export { registerProvider, type RegisterProviderOptions } from './registerProvider.js'
 export { signManifest } from '../manifest/sign.js'
+export type { VaultSettlementConfig } from '../internal/vaultConfig.js'
 export {
   SupabaseSeenTxStore,
 } from '../store/SupabaseSeenTxStore.js'

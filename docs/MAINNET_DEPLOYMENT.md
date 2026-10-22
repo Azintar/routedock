@@ -25,15 +25,13 @@ Do **not** deploy until every item below is explicitly marked done by the operat
     rg -n "(SECRET=|SEED|S[ABCDEFGHIJKLMNOPQRSTUVWXYZ234567]{55})" apps agent docs --glob "*.env*" --glob "*.dev.vars*" --glob "*.jsonc"
     ```
 - [ ] **Monitoring and alerting live**
-  - Stellar Expert webhook configured for vault + channel contracts.
-  - Alerts configured for `upgrade_proposed`, `upgrade_cancelled`, and `upgraded` events.
-  - Supabase alerting configured for `policy_reject` spikes.
+  - Stellar Expert webhook configured for vault contract events (`payment_authorized`, `vault_frozen`, `vault_unfrozen`, `agent_key_rotated`, `expiry_updated`, `cap_updated`, `allowlist_updated`, `session_settled`, `admin_transfer_requested`, `admin_changed`, `upgrade_proposed`, `upgrade_cancelled`, `upgraded`) + channel contracts.
   - Command:
     ```bash
     curl -s https://stellar.expert/explorer/public | head -n 1
     ```
 - [ ] **Rollback plan tested**
-  - Procedure validated to stop new sessions, rotate keys, and force session expiry.
+  - Procedure validated to stop the agent, sweep funds, rotate keys, and freeze/expire the vault (see Section 9).
   - Last tabletop timestamp recorded.
   - Command:
     ```bash
@@ -94,7 +92,7 @@ stellar account balance <ACCOUNT_ADDRESS> --network mainnet
 
 ### Runtime preflight
 
-Starting in SDK v0.1.3+, each `client.pay()` call runs a trustline preflight check before submitting any on-chain transaction:
+Starting in SDK 0.2.0, each `client.pay()` call runs a trustline preflight check before submitting any on-chain transaction:
 
 1. Queries Horizon for the payer account's balances.
 2. Checks for a balance entry matching the manifest's `asset` code (e.g. `USDC`).
@@ -133,39 +131,96 @@ stellar contract deploy \
   --lifetime_cap 0
 ```
 
-Record the output as `AGENT_VAULT_CONTRACT_ID`.
+Record the output as `AGENT_VAULT_CONTRACT_ID`. This ID is used by operators in `stellar contract invoke` management commands (the reference agent does not read it from the environment).
 
 ### Constructor Parameter Units & Stricter Production Policy
 
 Deploy-time arguments configure the vault atomically in `__constructor`:
 
-- **`--admin`**: Vault administrator Stellar G-address holding exclusive authorization for admin entrypoints (`set_daily_cap`, `add_to_allowlist`, `remove_from_allowlist`, `set_expiry`, `set_agent_pubkey`, `freeze`/`unfreeze`, `upgrade`, `transfer_admin`).
+- **`--admin`**: Vault administrator Stellar G-address holding exclusive authorization for admin entrypoints (`set_daily_cap`, `set_lifetime_cap`, `add_to_allowlist`, `remove_from_allowlist`, `set_expiry`, `set_agent_pubkey`, `freeze`/`unfreeze`, `propose_upgrade`, `execute_upgrade`, `cancel_upgrade`, `transfer_admin`).
 - **`--agent_pk`**: Agent's 32-byte Ed25519 public key as 64 hex characters used to authorize payments via `__check_auth`.
 - **`--daily_cap`**: Daily spend cap in USDC stroops, where 1 USDC = 10,000,000 stroops (`250000000` = 25 USDC/day conservative cap).
 - **`--allowlist`**: Map of payee address to daily sub-cap in stroops (JSON object format, e.g. `'{"<PAYEE_G_ADDRESS>":"250000000"}'`). Restrict to production provider payee accounts.
 - **`--expiry_ledger`**: Absolute ledger sequence (compared against `env.ledger().sequence()`, **not** a relative duration). Set a short session key lifetime (e.g. current ledger + 720 for ~1 hour, or 4,320 for ~6 hours).
 - **`--lifetime_cap`**: Total USDC stroops the vault may ever spend over its lifetime. Set to `0` for unlimited.
 
+Read back the deployed policy to confirm it landed on-chain (simulate-only via `--send=no`):
+
+```bash
+stellar contract invoke --id <AGENT_VAULT_CONTRACT_ID> --source-account <VAULT_ADMIN_ALIAS> --network mainnet --send=no -- daily_cap
+stellar contract invoke --id <AGENT_VAULT_CONTRACT_ID> --source-account <VAULT_ADMIN_ALIAS> --network mainnet --send=no -- allowlist
+stellar contract invoke --id <AGENT_VAULT_CONTRACT_ID> --source-account <VAULT_ADMIN_ALIAS> --network mainnet --send=no -- expiry_ledger
+stellar contract invoke --id <AGENT_VAULT_CONTRACT_ID> --source-account <VAULT_ADMIN_ALIAS> --network mainnet --send=no -- agent_pubkey
+```
+
+### Vault Admin Functions Reference
+
+| Function | Purpose |
+| :--- | :--- |
+| `freeze` | Freeze the contract to immediately block all agent transfers during an incident or key compromise. |
+| `unfreeze` | Unfreeze the contract to restore agent transfer authorization once remediation is complete. |
+| `set_expiry` | Extend or expire session keys (set ledger `<= latest` to immediately invalidate active keys). |
+| `set_agent_pubkey` | Rotate the agent's authorized 32-byte Ed25519 public key (hex) after a key leak. |
+| `set_daily_cap` | Adjust the global daily USDC spend cap (in stroops) across all payees. |
+| `set_lifetime_cap` | Set the lifetime cap (stroops, 0 disables). |
+| `add_to_allowlist` | Add or update an allowed payee address with a per-payee daily sub-cap (in stroops). |
+| `remove_from_allowlist` | Remove a payee address from the allowlist so payments to it are rejected. |
+| `propose_upgrade` | Propose a new contract wasm bytecode hash subject to the timelock delay (admin-only). |
+| `execute_upgrade` | Execute a proposed contract wasm upgrade once the timelock delay has elapsed (admin-only). |
+| `cancel_upgrade` | Cancel an active contract wasm upgrade proposal before or after readiness (admin-only). |
+| `transfer_admin` | Propose transferring contract admin ownership to a new address (2-step transfer). |
+| `accept_admin` | Called by the pending admin address to claim contract ownership. |
+
 Example environment snippet for agent runtime:
 
 ```bash
 STELLAR_NETWORK=mainnet
 AGENT_DAILY_CAP_USDC=25
-AGENT_VAULT_CONTRACT_ID=<C...>
-ALLOWED_PAYEES=<G...>,<G...>
-SESSION_EXPIRY_LEDGERS=450
 ```
+
+Note: `AGENT_DAILY_CAP_USDC` is the SDK's local client-side daily cap in decimal USDC (enforced before submitting transactions).
 
 ### Timelocked Wasm upgrade runbook
 
 New deployments enforce a fixed 17,280-ledger delay (approximately one day) from the first proposal. Upgrades on a contract still running the previous Wasm require one unavoidable bootstrap invocation through its old immediate `upgrade` entry point; the old deployed code cannot enforce a rule it does not contain. After that transition, use the new flow exclusively:
 
-1. Build and independently review the target Wasm, then upload it and record its exact 32-byte hash.
+1. Choose the reviewed **main commit** and open its successful **CI → contract-wasm** job. The job summary records the tested commit, release size, and raw Wasm SHA-256. Download `agent-vault-wasm-<full-commit-sha>` from that run's artifacts and independently review the code. Verify the artifact using the commands below, then upload those exact Wasm bytes and record the returned 32-byte hash.
 2. Call `propose_upgrade(new_wasm_hash)` with the vault admin. Record the `upgrade_proposed` event and verify `pending_upgrade` returns the expected hash and `ready_at_ledger`.
 3. Notify vault operators and governed payers, link the reviewed build, and allow the full ledger delay. Rescheduling replaces the target and restarts the delay.
 4. If the proposal is no longer approved, call `cancel_upgrade` before execution and verify `upgrade_cancelled` plus an empty `pending_upgrade`.
 5. At or after `ready_at_ledger`, call `execute_upgrade()` with the vault admin. Verify the system executable update and custom `upgraded` event contain the approved hash.
 6. Re-check `daily_cap`, `allowlist`, `agent_pubkey`, and `expiry_ledger`, then run a capped authorization smoke test before restoring traffic.
+
+Verify a downloaded artifact before upload (GitHub CLI example):
+
+```bash
+gh run download <CI_RUN_ID> --repo winsznx/routedock \
+  --name agent-vault-wasm-<FULL_COMMIT_SHA> --dir reviewed-vault
+cd reviewed-vault
+sha256sum --check agent_vault.wasm.sha256
+cat agent_vault.wasm.json
+sha256sum agent_vault.wasm
+```
+
+Check that the metadata `commit` is the reviewed commit and `dirty` is `false`;
+compare the locally calculated SHA-256 to the **contract-wasm job summary**, not
+just the checksum file bundled with the download. A PR run builds GitHub's
+synthetic merge commit, so use the successful main-branch run for the final
+merged commit when deploying. The artifact expires after 90 days; if unavailable,
+rerun CI for that exact commit, or rebuild it with the documented pinned toolchain
+and locked dependencies and independently verify the result.
+
+The raw Wasm SHA-256 (64 hex characters / 32 bytes) must match the hash returned
+by the upload, the `new_wasm_hash` in `upgrade_proposed`, and the hash returned by
+`pending_upgrade()`. Normalize the event's byte encoding to hex before comparing.
+Stop or cancel if any differ. The GitHub artifact archive digest is a different
+hash and must not be used as the contract hash. Use the downloaded CI Wasm for
+a proposed CI hash; local rebuilds are not guaranteed byte-identical across
+environments. Do not optimize or otherwise
+modify the Wasm after verification; changed bytes require a new reviewed hash.
+Keep the CI run URL, commit, local checksum, and proposal event in the upgrade
+record throughout the full timelock. This also applies to the one-time bootstrap
+through the old `upgrade` entry point.
 
 The timelock provides notice for code replacement only. The same admin can still rotate keys and change policy settings; use hardware-backed custody, alerts, and tested operator procedures.
 
@@ -277,6 +332,10 @@ wrangler secret put CHANNEL_CONTRACT_ID
 wrangler secret put COMMITMENT_PUBLIC_KEY
 wrangler secret put SUPABASE_SERVICE_KEY
 wrangler secret put USDC_ASSET_CONTRACT
+# Optional — agent vault contract (the same AGENT_VAULT_CONTRACT_ID from the
+# vault deploy step above). When set, the provider records session_settled on
+# the vault after each clean mpp-session close.
+wrangler secret put AGENT_VAULT_CONTRACT_ID
 ```
 
 Deploy Provider B:
@@ -292,7 +351,6 @@ The agent runner runs as a standalone Node service configured via `agent/.env`:
 ```bash
 STELLAR_NETWORK=mainnet
 AGENT_SECRET=<S...>
-AGENT_VAULT_CONTRACT_ID=<MAINNET_AGENT_VAULT_CONTRACT_ID>
 USDC_ASSET_CONTRACT=<MAINNET_USDC_SAC_CONTRACT_ID>
 PROVIDER_A_URL=https://api-a.routedock.xyz
 PROVIDER_B_URL=https://api-b.routedock.xyz
@@ -304,7 +362,7 @@ SUPABASE_ANON_KEY=<your-anon-key>
 
 ```bash
 curl -s https://api-a.routedock.xyz/.well-known/routedock.json | jq '.network,.pricing.x402.facilitator'
-curl -s https://api-b.routedock.xyz/.well-known/routedock.json | jq '.network,.pricing["mpp-session"].channel_contract'
+curl -s https://api-b.routedock.xyz/.well-known/routedock.json | jq '.network,.pricing["mpp-session"].channel_factory'
 curl -s https://api-a.routedock.xyz/health
 curl -s https://api-b.routedock.xyz/health
 ```
@@ -316,11 +374,23 @@ curl -s https://api-b.routedock.xyz/health
 ### Stellar Expert webhooks
 
 Configure alerts for:
-- agent vault contract invocations
-- `upgrade_proposed` and `upgrade_cancelled` events (page the upgrade owner immediately)
-- `upgraded` events (verify the executable hash and retained policy storage)
-- channel open/close transactions
-- failed transactions involving payee accounts
+- Agent vault contract invocations and events:
+  - `payment_authorized`
+  - `vault_frozen`
+  - `vault_unfrozen`
+  - `agent_key_rotated`
+  - `expiry_updated`
+  - `cap_updated`
+  - `allowlist_updated`
+  - `session_settled`
+  - `admin_transfer_requested`
+  - `admin_changed`
+  - `upgrade_proposed`
+  - `upgrade_cancelled`
+  - `upgraded`
+  *(Note: Rejected transfers emit no event per `contracts/agent-vault/src/lib.rs`, so on-chain indexing cannot alert on policy rejections.)*
+- Channel open/close transactions (`open`, `close`)
+- Failed transactions involving payee accounts
 
 Example webhook filter values:
 
@@ -331,24 +401,6 @@ entity=<CHANNEL_CONTRACT_ID>
 entity=<PAYEE_G_ADDRESS>
 ```
 
-### Supabase alerts for `policy_reject`
-
-Track local policy enforcement failures from `tx_log`.
-
-SQL check:
-
-```sql
-select created_at, tx_type, error
-from public.tx_log
-where tx_type = 'policy_reject'
-order by created_at desc
-limit 50;
-```
-
-Alert threshold example:
-- warning: `>= 5` rejects in 10 minutes
-- critical: `>= 20` rejects in 10 minutes
-
 ---
 
 ## 9) Operational runbook
@@ -356,7 +408,7 @@ Alert threshold example:
 ### Incident response
 
 1. Freeze autonomous traffic by disabling agent runs.
-2. Expire active session keys (set immediate/near-immediate ledger expiry).
+2. Expire active session keys via `set_expiry` (setting ledger `<= latest` immediately invalidates keys).
 3. Revoke compromised API tokens (OZ + service credentials).
 4. Review latest on-chain tx + Supabase logs.
 
@@ -367,18 +419,74 @@ Alert threshold example:
 3. Shift traffic to new key and redeploy.
 4. Revoke old key and archive incident record.
 
-### Emergency pause via session key expiry
+### Emergency pause and key compromise procedure
 
-Set minimal session expiry in `agent/.env`:
+When an agent secret or session key is suspected compromised, follow this ordered procedure:
 
-```bash
-SESSION_EXPIRY_LEDGERS=5
-```
+1. **Stop the agent process:**
+   Immediately terminate the running agent process (`kill <pid>`, `systemctl stop`, etc.) to halt automated spending. Do **not** restart the agent until keys and balances are secured.
 
-Then restart agent service:
+2. **Sweep agent account funds & rotate `AGENT_SECRET`:**
+   Because the reference agent pays directly from its Stellar keypair, immediately transfer remaining USDC and XLM off the agent account to a cold storage account:
+   ```bash
+   # Sweep USDC
+   stellar tx new payment \
+     --source-account <AGENT_ALIAS> \
+     --destination <COLD_G_ADDRESS> \
+     --asset USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN \
+     --amount <USDC_STROOPS> \
+     --network mainnet
 
-```bash
-pnpm --filter agent start
-```
+   # Sweep native XLM (leave the minimum base reserve)
+   stellar tx new payment \
+     --source-account <AGENT_ALIAS> \
+     --destination <COLD_G_ADDRESS> \
+     --amount <XLM_STROOPS> \
+     --network mainnet
+   ```
+   Then generate a new `AGENT_SECRET` and update `agent/.env`. This fund sweep is the critical step that prevents a leaked `AGENT_SECRET` from draining the agent account.
 
-This keeps custody with primary vault controls while rapidly reducing session key blast radius.
+3. **Freeze vault, rotate agent key, and restore session expiry (if using agent vault):**
+   For any funds held in an agent vault, immediately freeze the contract with the admin key:
+   ```bash
+   stellar contract invoke \
+     --id <AGENT_VAULT_CONTRACT_ID> \
+     --source-account <VAULT_ADMIN_ALIAS> \
+     --network mainnet \
+     -- freeze
+   ```
+   Optionally, for containment, immediately expire active keys by passing the current or a past ledger sequence (`stellar ledger latest --network mainnet`):
+   ```bash
+   stellar contract invoke \
+     --id <AGENT_VAULT_CONTRACT_ID> \
+     --source-account <VAULT_ADMIN_ALIAS> \
+     --network mainnet \
+     -- set_expiry \
+     --new_expiry <CURRENT_OR_PAST_LEDGER>
+   ```
+   Rotate the vault's authorized agent key to the new key's 32-byte Ed25519 public key (hex). Note that `set_agent_pubkey` already invalidates the old key on its own:
+   ```bash
+   stellar contract invoke \
+     --id <AGENT_VAULT_CONTRACT_ID> \
+     --source-account <VAULT_ADMIN_ALIAS> \
+     --network mainnet \
+     -- set_agent_pubkey \
+     --new_pk <NEW_AGENT_PUBKEY_HEX>
+   ```
+   Reset `set_expiry` to a fresh future ledger sequence (e.g. current ledger + 720 for ~1 hour) so the newly installed agent key is not locked out (as `expiry_ledger` applies globally to the vault, not per-key):
+   ```bash
+   stellar contract invoke \
+     --id <AGENT_VAULT_CONTRACT_ID> \
+     --source-account <VAULT_ADMIN_ALIAS> \
+     --network mainnet \
+     -- set_expiry \
+     --new_expiry <FUTURE_LEDGER>
+   ```
+   Only after the new key is installed and the fresh future expiry ledger is set, unfreeze the contract:
+   ```bash
+   stellar contract invoke \
+     --id <AGENT_VAULT_CONTRACT_ID> \
+     --source-account <VAULT_ADMIN_ALIAS> \
+     --network mainnet \
+     -- unfreeze
+   ```

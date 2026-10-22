@@ -96,7 +96,12 @@ export interface EndpointDescriptor {
 
 /** Full RouteDock discovery manifest — served at /.well-known/routedock.json */
 export interface RouteDockManifest {
-  /** Manifest schema version (major.minor), e.g. "1.0", "1.1", "2.0" */
+  /**
+   * Manifest schema version (major.minor), e.g. "1.0", "1.1", "2.0".
+   * Clients reject a manifest whose major version is higher than the highest
+   * one they support (`RouteDockClientVersionError`); any minor of a supported
+   * major is accepted, since minor bumps are additive.
+   */
   routedock: string
   /**
    * Minimum SDK client version (major.minor) required to use this manifest.
@@ -231,6 +236,42 @@ export interface PreflightResult {
   latency_hints?: Record<string, number>
   /** Optional protocol features supported by this provider */
   capabilities?: RouteDockManifest['capabilities']
+}
+
+/** Estimated cost of one payment mode, as declared by the provider manifest */
+export interface PreflightModeCost {
+  /** Payment mode this cost applies to */
+  mode: PaymentMode
+  /** Charge per unit in the payment asset (decimal string): per request, or per voucher for session modes */
+  amount: string
+  /** Billing unit for `amount` */
+  per: 'request' | 'voucher'
+  /** Payment asset ticker that would be used for this mode, e.g. "USDC" */
+  asset: string
+  /** Minimum channel deposit (decimal string) — session modes only */
+  min_deposit?: string
+}
+
+/** Deprecation / sunset signals surfaced by client.preflight(url) */
+export interface PreflightComplianceFlags {
+  /** Modes still listed for backwards compatibility but deprecated */
+  deprecated_modes: PaymentMode[]
+  /** Manifest-level sunset timestamp (ISO 8601), when the provider declares one */
+  sunset_at?: string
+  /** Whether an endpoint matching the URL path is marked deprecated */
+  endpoint_deprecated: boolean
+  /** Sunset timestamp (ISO 8601) of the endpoint matching the URL path, when declared */
+  endpoint_sunset_at?: string
+}
+
+/** Result returned by client.preflight(url) — manifest compatibility check with no money movement */
+export interface UrlPreflightResult {
+  /** Payment modes supported by this provider */
+  modes: PaymentMode[]
+  /** Estimated cost for each supported mode */
+  costs: PreflightModeCost[]
+  /** Deprecation / sunset flags */
+  compliance: PreflightComplianceFlags
 }
 
 /** Result returned by client.estimateCost() — the expected charge without submitting any transaction */
@@ -407,10 +448,16 @@ export interface SessionHandle {
   stats(): SessionStats
   /** Close the channel on-chain with the highest signed voucher */
   close(): Promise<SessionCloseResult>
-  /** Request refund from the channel contract (initiates dispute) */
-  requestRefund(): Promise<string>
-  /** Server-side counter-mechanism to settle with latest voucher before refund window expires */
-  settleWithLatestVoucher(): Promise<string>
+  /**
+   * Request refund from the channel contract (initiates dispute).
+   * Returns the transaction hash only after on-chain confirmation (SUCCESS).
+   */
+  requestRefund(options?: { timeoutMs?: number; intervalMs?: number }): Promise<string>
+  /**
+   * Server-side counter-mechanism to settle with latest voucher before refund window expires.
+   * Returns the transaction hash only after on-chain confirmation (SUCCESS).
+   */
+  settleWithLatestVoucher(options?: { timeoutMs?: number; intervalMs?: number }): Promise<string>
   /** Get the current dispute status of the channel */
   getDisputeStatus(): Promise<DisputeStatus>
   /**
@@ -438,7 +485,7 @@ export interface SessionState {
   /** Monotonically increasing cumulative amount — stored as string to preserve precision */
   cumulative_amount: string
   last_signature: string
-  status: 'open' | 'closing' | 'closed'
+  status: 'open' | 'closing' | 'closed' | 'failed'
   opened_at: string
   updated_at: string
   settlement_tx_hash: string | null

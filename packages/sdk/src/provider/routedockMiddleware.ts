@@ -8,6 +8,7 @@ import type { SeenTxStore } from './SeenTxStore.js'
 import type { OrphanedSessionInfo } from './MppSessionHandler.js'
 import type { RouteDockLogger } from '../internal/logger.js'
 import type { VaultSettlementOptions } from './internal/vaultSettlement.js'
+import type { VaultSettlementConfig } from '../internal/vaultConfig.js'
 
 export interface RouteDockMiddlewareOptions {
   modes: PaymentMode[]
@@ -69,6 +70,11 @@ export interface RouteDockMiddlewareOptions {
    * former process-wide AGENT_VAULT_CONTRACT env lookup.
    */
   vaultSettlement?: VaultSettlementOptions
+   * Record `session_settled` on the agent vault after each clean mpp-session
+   * close. Falls back to the deprecated `AGENT_VAULT_CONTRACT`/
+   * `AGENT_VAULT_CONTRACT_ID` env vars when unset.
+   */
+  vaultSettlement?: VaultSettlementConfig
 }
 
 /**
@@ -79,7 +85,7 @@ export interface RouteDockMiddlewareOptions {
  *
  * @example
  * ```ts
- * import { routedock } from '@routedock/sdk/provider'
+ * import { routedock } from '@routedock/routedock/provider'
  *
  * app.use('/price', routedock({
  *   modes: ['x402', 'mpp-charge'],
@@ -232,3 +238,5 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
       .catch((err) => next(err))
   }
 }
+
+export type { VaultSettlementConfig } from '../internal/vaultConfig.js'

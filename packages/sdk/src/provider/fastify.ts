@@ -10,6 +10,7 @@ import type { SeenTxStore } from './SeenTxStore.js'
 import type { OrphanedSessionInfo } from './MppSessionHandler.js'
 import type { RouteDockLogger } from '../internal/logger.js'
 import type { VaultSettlementOptions } from './internal/vaultSettlement.js'
+import type { VaultSettlementConfig } from '../internal/vaultConfig.js'
 
 export interface RouteDockFastifyOptions {
   modes: PaymentMode[]
@@ -40,6 +41,12 @@ export interface RouteDockFastifyOptions {
   logger?: RouteDockLogger
   /** Agent vault configuration for recording session_settled after a clean close. */
   vaultSettlement?: VaultSettlementOptions
+  /**
+   * Record `session_settled` on the agent vault after each clean mpp-session
+   * close. Falls back to the deprecated `AGENT_VAULT_CONTRACT`/
+   * `AGENT_VAULT_CONTRACT_ID` env vars when unset.
+   */
+  vaultSettlement?: VaultSettlementConfig
 }
 
 // ---------------------------------------------------------------------------
@@ -317,3 +324,5 @@ export function routedockFastify(opts: RouteDockFastifyOptions): FastifyPluginAs
 
   return plugin
 }
+
+export type { VaultSettlementConfig } from '../internal/vaultConfig.js'

@@ -1,17 +1,21 @@
-# @routedock/sdk
+# @routedock/routedock
 
 Unified payment execution layer for autonomous agents on Stellar. One SDK for x402, MPP charge, and MPP session — mode selected automatically from the provider's `routedock.json` manifest.
+
+## Requirements
+
+Node.js **22 or newer**, matching the supported runtime of all RouteDock npm packages.
 
 ## Install
 
 ```bash
-npm install @routedock/sdk
+npm install @routedock/routedock
 ```
 
 ## Agent Usage
 
 ```ts
-import { RouteDockClient } from '@routedock/sdk/client'
+import { RouteDockClient } from '@routedock/routedock/client'
 import { Keypair } from '@stellar/stellar-sdk'
 
 const client = new RouteDockClient({
@@ -35,6 +39,15 @@ for await (const update of session.stream()) {
 await session.close() // triggers on-chain settlement
 ```
 
+### Spend cap and other assets
+
+The cap is a single USDC total. If the asset selected for a payment is not
+`spendCap.asset` (for example a provider that prices in XLM), `pay()` and
+`openSession()` throw `RouteDockPolicyRejectError` with reason
+`local_cap_asset_mismatch` before anything is paid, and nothing is added to the
+USDC total. USDC-only providers are unaffected. See
+`docs/MULTI_ASSET_SUPPORT.md`.
+
 ### Durable spend cap
 
 The `spendCap` is enforced via a pluggable `SpendStore` (`read()` / `write()`).
@@ -44,7 +57,7 @@ production, inject a persistent implementation so a crash or restart can't reset
 the accumulator and bypass the cap:
 
 ```ts
-import { RouteDockClient, type SpendStore, type DailySpend } from '@routedock/sdk/client'
+import { RouteDockClient, type SpendStore, type DailySpend } from '@routedock/routedock/client'
 
 const redisSpendStore: SpendStore = {
   async read(): Promise<DailySpend | null> {
@@ -64,11 +77,24 @@ const client = new RouteDockClient({
 })
 ```
 
+On Node you can use the file-backed store instead. It depends on `node:fs`, so it
+lives in a Node-only entry point and is **not** exported from `/client`:
+
+```ts
+import { RouteDockClient } from '@routedock/routedock/client'
+import { FileSpendStore } from '@routedock/routedock/node' // Node only (node:fs)
+
+const client = new RouteDockClient({
+  // ...
+  spendStore: new FileSpendStore('~/.routedock/spend.json'),
+})
+```
+
 ## Provider Usage
 
 ```ts
 import express from 'express'
-import { routedock } from '@routedock/sdk/provider'
+import { routedock } from '@routedock/routedock/provider'
 
 const app = express()
 
@@ -441,6 +467,26 @@ import from `@routedock/routedock/provider` in a Workers snippet — that's the
 Node-only Express entry point and pulls in dependencies (like `express`) that
 don't run on Workers.
 
+### Runtime-neutral entry points
+
+`@routedock/routedock/client`, `/react` and `/provider/hono` use only
+Web-standard APIs. They run in browsers, Cloudflare Workers (no `nodejs_compat`
+needed for this package), Bun, Deno and Node, and contain no `node:*` imports or
+`Buffer` references. CI enforces this (`node scripts/check-runtime-neutral.mjs`)
+against the built output.
+
+Anything that needs Node built-ins is kept out of those entries:
+
+| Import | Runtime | Notes |
+| --- | --- | --- |
+| `@routedock/routedock/client`, `/react`, `/provider/hono` | any | runtime-neutral |
+| `@routedock/routedock/node` | Node only | `FileSpendStore` (`node:fs`) |
+| `@routedock/routedock/provider`, `/provider/fastify` | Node only | Express/Fastify adapters |
+| `@routedock/routedock` | Node | full SDK, includes `FileSpendStore` |
+
+Third-party dependencies are outside this guarantee: for example `mppx` imports
+`node:util`, so a Worker that uses it can still need `nodejs_compat`.
+
 ## React Integration
 
 > **Warning:** These hooks create a RouteDockClient in the browser, so the wallet secret and any commitmentSecret are readable by anyone who loads the page.
@@ -451,10 +497,10 @@ don't run on Workers.
 >
 > For production or mainnet, keep RouteDockClient on the server (a route handler or server action) and read the key from a non-public variable such as `AGENT_SECRET`, as the Agent Usage section does.
 
-`@routedock/sdk/react` provides hooks for client construction, payments, sessions, and live tx log subscription. Wrap your app with `RouteDockProvider`:
+`@routedock/routedock/react` provides hooks for client construction, payments, sessions, and live tx log subscription. Wrap your app with `RouteDockProvider`:
 
 ```tsx
-import { RouteDockProvider, useRouteDockClient } from '@routedock/sdk/react'
+import { RouteDockProvider, useRouteDockClient } from '@routedock/routedock/react'
 import { createClient } from '@supabase/supabase-js'
 
 // Dedicated throwaway testnet key. Never a funded or mainnet key.
@@ -482,7 +528,7 @@ function App({ children }: { children: React.ReactNode }) {
 
 ```ts
 // app/api/price/route.ts (runs on the server only)
-import { RouteDockClient } from '@routedock/sdk/client'
+import { RouteDockClient } from '@routedock/routedock/client'
 
 const client = new RouteDockClient({
   wallet: process.env.AGENT_SECRET!,
@@ -499,7 +545,7 @@ export async function POST() {
 ### `usePay(url, options?)`
 
 ```tsx
-import { usePay } from '@routedock/sdk/react'
+import { usePay } from '@routedock/routedock/react'
 
 function PriceButton() {
   const { pay, result, loading, error } = usePay('https://provider.example.com/price')
@@ -516,7 +562,7 @@ function PriceButton() {
 
 ```tsx
 import { useEffect } from 'react'
-import { useSession } from '@routedock/sdk/react'
+import { useSession } from '@routedock/routedock/react'
 
 function StreamingFeed() {
   const { open, close, status, vouchers, cumulative } = useSession(
@@ -537,7 +583,7 @@ The hook automatically fires `session.close()` in the background on unmount when
 ### `useTxLog(filter?)`
 
 ```tsx
-import { useTxLog } from '@routedock/sdk/react'
+import { useTxLog } from '@routedock/routedock/react'
 
 function ActivityFeed({ channelId }: { channelId: string }) {
   const txLog = useTxLog({ channelId, limit: 25 })
@@ -572,8 +618,9 @@ import {
   RouteDockError,
   RouteDockFacilitatorError,
   RouteDockManifestError,
+  RouteDockPaymentRejectedError,
   RouteDockPolicyRejectError,
-} from '@routedock/sdk/client'
+} from '@routedock/routedock/client'
 
 const client = new RouteDockClient({
   wallet: process.env.AGENT_SECRET!,
@@ -587,6 +634,9 @@ try {
 } catch (err) {
   if (err instanceof RouteDockPolicyRejectError) {
     console.error('Spend cap exceeded:', err.reason)
+  } else if (err instanceof RouteDockPaymentRejectedError) {
+    // The provider refused the signed payment; `reason` is its explanation.
+    console.error(`Payment rejected (HTTP ${err.status}):`, err.reason ?? err.providerError)
   } else if (err instanceof RouteDockFacilitatorError) {
     console.error(`Facilitator HTTP ${err.status} (retryable=${err.retryable})`)
   } else if (err instanceof RouteDockManifestError) {
@@ -604,6 +654,7 @@ try {
 | `RouteDockManifestError` | no | Invalid manifest, missing pricing fields |
 | `RouteDockNoSupportedModeError` | no | Provider has no compatible payment mode |
 | `RouteDockFacilitatorError` | yes | Facilitator/provider 429 or 5xx |
+| `RouteDockPaymentRejectedError` | no | Provider refused the signed paid request (HTTP 401/402/other 4xx); `status` and `reason` carry why |
 | `RouteDockNetworkError` | yes | Timeouts, connection failures |
 | `RouteDockSignatureError` | no | Signing or commitment failure |
 | `RouteDockVoucherMonotonicityError` | no | Non-increasing voucher amount |
