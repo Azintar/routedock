@@ -289,6 +289,15 @@ class LruCache<K, V> {
 const manifestCache = new LruCache<string, CacheEntry>(DEFAULT_MANIFEST_CACHE_MAX_SIZE)
 
 /**
+ * In-flight manifest fetches keyed by base URL. Concurrent cache misses for
+ * the same origin share one HTTP request, one signature verification pass and
+ * one schema validation instead of fanning out. Entries are removed as soon
+ * as the shared fetch settles — success caches via `manifestCache`, failure
+ * leaves nothing behind so the next call retries.
+ */
+const inflightManifestFetches = new Map<string, Promise<RouteDockManifest>>()
+
+/**
  * Override the manifest cache's max size (default 512). Affects the shared,
  * process-wide cache used by all RouteDockClient instances.
  */
@@ -382,6 +391,12 @@ export interface ModeSelectOptions {
  * Callers that obtained a payee from a registry/pinned allowlist MUST pass it;
  * without it the self-signed signature alone proves nothing about who served
  * the manifest.
+ *
+ * Concurrent calls that miss the cache for the same `baseUrl` share one
+ * in-flight HTTP request instead of fanning out (the cache is process-wide,
+ * so this also holds across `RouteDockClient` instances). The first caller's
+ * `retryPolicy` and `manifestTimeoutMs` govern the shared request; the
+ * per-caller checks above still run for every caller after it settles.
  */
 export async function fetchManifest(
   baseUrl: string,
@@ -402,6 +417,44 @@ export async function fetchManifest(
     return cached.manifest
   }
 
+  // Deduplicate concurrent misses: the first caller starts the fetch, the
+  // rest join the shared promise. The shared fetch runs only caller-
+  // independent work (HTTP, JSON parse, schema validation, caching); the
+  // per-caller checks run below after every caller awaits it, so a caller
+  // with a different trust anchor is still enforced. A rejected shared fetch
+  // rejects every waiter and is never cached — the next call retries with
+  // its own retry policy and timeout.
+  let inflight = inflightManifestFetches.get(baseUrl)
+  if (!inflight) {
+    inflight = fetchAndCacheManifest(baseUrl, retryPolicy, manifestTimeoutMs).finally(() => {
+      inflightManifestFetches.delete(baseUrl)
+    })
+    inflightManifestFetches.set(baseUrl, inflight)
+  }
+
+  const manifest = await inflight
+
+  // Same per-caller checks as the cache-hit path, so joining an in-flight
+  // fetch weakens nothing.
+  verifyManifestSignature(manifest, expectedPayee)
+  assertClientVersionSupported(manifest, baseUrl)
+  assertManifestVersionSupported(manifest, baseUrl)
+  assertManifestValid(manifest, baseUrl)
+  assertManifestActive(manifest, baseUrl)
+  return manifest
+}
+
+/**
+ * Fetch, validate and cache a manifest with no cache lookup and no
+ * deduplication. Callers go through `fetchManifest`, which owns both.
+ * The first caller's `retryPolicy` and `manifestTimeoutMs` govern the shared
+ * request when this is fanned in from concurrent callers.
+ */
+async function fetchAndCacheManifest(
+  baseUrl: string,
+  retryPolicy?: RetryPolicy,
+  manifestTimeoutMs = DEFAULT_MANIFEST_TIMEOUT_MS,
+): Promise<RouteDockManifest> {
   const url = baseUrl.replace(/\/$/, '') + '/.well-known/routedock.json'
 
   return withRetry(async () => {
@@ -449,8 +502,13 @@ export async function fetchManifest(
     }
 
     const manifest = raw as unknown as RouteDockManifest
+    // Caller-independent gates run before caching so a manifest nobody could
+    // use (malformed, wrong schema version, past sunset, bad self-signature)
+    // is never cached. The per-caller trust-anchor binding is deliberately
+    // not checked here — expectedPayee differs per caller — and runs in
+    // fetchManifest after the shared promise settles.
     assertManifestValid(manifest, baseUrl)
-    verifyManifestSignature(manifest, expectedPayee)
+    verifyManifestSignature(manifest)
     assertClientVersionSupported(manifest, baseUrl)
     assertManifestVersionSupported(manifest, baseUrl)
     assertManifestActive(manifest, baseUrl)
