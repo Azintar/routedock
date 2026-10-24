@@ -8,6 +8,7 @@ import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, P
 import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
 import { USDC_ISSUERS, usdcToStroops } from '../internal/usdc.js'
+import { HORIZON_URLS } from '../network.js'
 import { InMemorySpendStore, type DailySpend, type SpendStore } from '../store/SpendStore.js'
 import { selectAsset } from '../internal/assetUtils.js'
 
@@ -376,12 +377,7 @@ export class RouteDockClient {
     const cached = RouteDockClient._trustlineCache.get(cacheKey)
     if (cached && Date.now() < cached.expiresAt) return
 
-    const horizonUrl =
-      this.network === 'testnet'
-        ? 'https://horizon-testnet.stellar.org'
-        : 'https://horizon.stellar.org'
-
-    const server = new Horizon.Server(horizonUrl)
+    const server = new Horizon.Server(HORIZON_URLS[this.network])
     try {
       const account = await server.loadAccount(this.keypair.publicKey())
       const balances = account.balances as unknown[]
