@@ -1,3 +1,4 @@
+import { assertProviderConfig } from './internal/assertProviderConfig.js'
 import type { MiddlewareHandler } from 'hono'
 import { Keypair } from '@stellar/stellar-sdk'
 import { ExactStellarScheme as ExactStellarFacilitatorScheme } from '@x402/stellar/exact/facilitator'
@@ -914,6 +915,7 @@ function isWebSocketUpgradeRequest(c: {
  */
 export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
   const handlers: MiddlewareHandler[] = []
+  assertProviderConfig(opts, 'routedockHono')
   const signedManifest = signManifest(opts.manifest, opts.payeeSecretKey)
 
   if (opts.modes.includes('x402') && opts.pricing.x402) {
